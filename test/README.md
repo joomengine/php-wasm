@@ -21,7 +21,9 @@ descriptor using the exact PHP version in `versions.json`.
 `runtime.test.mjs` exercises actual CLI and HTTP semantics, uploads, sessions,
 native extensions, Fibers, asynchronous host calls, request isolation, concurrent
 queueing, standard stream lifecycle, limits, asset integrity, and filesystem
-boundaries. Its repeated mixed-request test checks that declarations and globals
+boundaries. Native dependency versions must match the source catalog, and a gzip
+forward-seek regression checks the zero-fill behavior of the patched zlib build.
+Its repeated mixed-request test checks that declarations and globals
 reset across CLI, HTTP, and fatal invocations. It is not a memory-leak proof or a
 Joomla compatibility certification.
 

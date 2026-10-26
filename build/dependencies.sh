@@ -7,8 +7,11 @@ BUILD=$(cd "$BUILD" && pwd)
 exec 9>"$BUILD/dependencies.lock"
 flock 9
 source "$ROOT/build/common.sh"
-fingerprint=$({ sha256sum "$ROOT/versions.json" "$ROOT/build/dependencies.sh" "$ROOT/build/common.sh" "$ROOT/build/setup-emsdk.sh" "$ROOT"/patches/emscripten-*.patch; emcc --version; printf '%s\n' "$CFLAGS" "$CXXFLAGS" "$CPPFLAGS" "$LDFLAGS"; } | sha256sum | cut -d' ' -f1)
+fingerprint=$({ sha256sum "$ROOT/versions.json" "$ROOT/build/dependencies.sh" "$ROOT/build/common.sh" "$ROOT/build/setup-emsdk.sh" "$ROOT"/patches/emscripten-*.patch "$ROOT"/patches/zlib-*.patch; emcc --version; printf '%s\n' "$CFLAGS" "$CXXFLAGS" "$CPPFLAGS" "$LDFLAGS"; } | sha256sum | cut -d' ' -f1)
 if [[ -f "$BUILD/dependencies.ready" ]] && [[ $(cat "$BUILD/dependencies.ready") == "$fingerprint" ]]; then exit 0; fi
+# A failed upgrade must not leave an older success marker usable after a
+# catalog rollback against a prefix that the failed build already changed.
+rm -f "$BUILD/dependencies.ready"
 if [[ -f "$BUILD/dependencies.build-id" ]] && [[ $(cat "$BUILD/dependencies.build-id") != "$fingerprint" ]]; then
   rm -rf "$PREFIX" "$BUILD/icu-host" "$BUILD/icu-wasm" "$BUILD/licenses"
   for name in zlib openssl libxml2 libzip oniguruma icu libpng libjpeg; do
@@ -21,6 +24,22 @@ printf '%s\n' "$fingerprint" > "$BUILD/dependencies.build-id"
 for name in zlib openssl libxml2 libzip oniguruma icu libpng libjpeg; do
   fetch_source ".libraries.$name" "$SOURCES/$name"
 done
+
+# Backport the upstream fixes until a new zlib release contains them. The
+# dependency fingerprint invalidates the source tree if either patch changes.
+if [[ $(jq -r '.libraries.zlib.version' "$ROOT/versions.json") == 1.3.2 ]]; then
+  zlib_patch_fingerprint=$(cat "$ROOT"/patches/zlib-1.3.2-*.patch | sha256sum | cut -d' ' -f1)
+  if [[ ! -f "$SOURCES/zlib/.security-patched" ]]; then
+    zlib_source_fingerprint=$(cat "$SOURCES/zlib/.source-ready")
+    rm -f "$SOURCES/zlib/.source-ready"
+    for security_patch in "$ROOT"/patches/zlib-1.3.2-*.patch; do
+      patch -d "$SOURCES/zlib" -p1 --fuzz=0 --batch --forward < "$security_patch"
+    done
+    printf '%s\n' "$zlib_patch_fingerprint" > "$SOURCES/zlib/.security-patched"
+    printf '%s\n' "$zlib_source_fingerprint" > "$SOURCES/zlib/.source-ready"
+  fi
+  [[ $(cat "$SOURCES/zlib/.security-patched") == "$zlib_patch_fingerprint" ]]
+fi
 
 (cd "$SOURCES/zlib"; emconfigure ./configure --prefix="$PREFIX" --static; emmake make -j"$JOBS"; emmake make install)
 cmake_library libpng -DPNG_SHARED=OFF -DPNG_TESTS=OFF -DPNG_TOOLS=OFF \

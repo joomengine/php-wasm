@@ -44,7 +44,7 @@ export async function engineOptions(baseURL, { manifest = true } = {}) {
 }
 
 export async function installFixtures(php) {
-  for (const name of ['cli', 'request', 'binary', 'session', 'exit', 'fatal', 'timeout']) {
+  for (const name of ['cli', 'request', 'binary', 'session', 'exit', 'fatal', 'timeout', 'dependency-versions', 'zlib-seek']) {
     await php.fs.writeFile(`/workspace/${name}.php`, await readFile(new URL(`fixtures/${name}.php`, import.meta.url)));
   }
 }

@@ -1,8 +1,10 @@
 # Building the engine
 
-The build compiles upstream PHP and its native libraries from source. The only
-vendored compatibility code is the attributed Zend fiber/Emscripten patches in
-`patches/`. The runtime does not import a WordPress or Joomla playground package.
+The build compiles upstream PHP and its native libraries from source. The
+attributed patches in `patches/` cover Zend fiber/Emscripten compatibility and
+two upstream zlib security fixes awaiting a release. Their source commits and
+licenses are recorded in `patches/NOTICE`. The runtime does not import a
+WordPress or Joomla playground package.
 
 On Ubuntu install `build-essential autoconf automake libtool pkg-config bison
 re2c cmake ninja-build jq curl xz-utils unzip git`. Then:
@@ -31,6 +33,11 @@ The result includes full locale data. This deliberately favors correctness and
 one fetchable engine over minimal download size. ZIP supports deflate/store;
 optional ZIP encryption and extra compression codecs are not enabled. GD has
 PNG/GIF/JPEG support; WebP/FreeType are not compiled in this initial profile.
+
+Oniguruma 6.9.10 supplies PHP's multibyte regular expressions. Its upstream
+project ended maintenance on April 24, 2025; monitor PHP's
+[replacement discussion](https://github.com/php/php-src/issues/18467) and review
+security fixes independently until PHP provides a supported replacement.
 
 There is no socket proxy or browser TCP server. HTTPS downloads should be made
 by the JavaScript host and written to the virtual filesystem. OpenSSL supports

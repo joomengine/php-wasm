@@ -28,9 +28,9 @@
       "sha256": "bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16"
     },
     "openssl": {
-      "version": "3.5.6",
-      "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.6/openssl-3.5.6.tar.gz",
-      "sha256": "deae7c80cba99c4b4f940ecadb3c3338b13cb77418409238e57d7f31f2a3b736"
+      "version": "3.5.9",
+      "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz",
+      "sha256": "603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a"
     },
     "libzip": {
       "version": "1.12.1",
@@ -38,9 +38,9 @@
       "sha256": "3b66fe92cbc768d8d4d16e1427bfb7399e15d9c2795c2fc482e7b30a6332a422"
     },
     "icu": {
-      "version": "78.1",
-      "url": "https://github.com/unicode-org/icu/releases/download/release-78.1/icu4c-78.1-sources.tgz",
-      "sha256": "6217f58ca39b23127605cfc6c7e0d3475fe4b0d63157011383d716cb41617886"
+      "version": "78.3",
+      "url": "https://github.com/unicode-org/icu/releases/download/release-78.3/icu4c-78.3-sources.tgz",
+      "sha256": "3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0"
     },
     "oniguruma": {
       "version": "6.9.10",
@@ -48,14 +48,14 @@
       "commit": "4ef89209a239c1aea328cf13c05a2807e5c146d1"
     },
     "libxml2": {
-      "version": "2.15.1",
+      "version": "2.15.4",
       "repository": "https://github.com/GNOME/libxml2.git",
-      "commit": "b7fa62cbe8ef0df5869e000d5b690bdedd07f33e"
+      "commit": "96498992efa48d52b0e8b83058bd88dbdaf153c1"
     },
     "libpng": {
-      "version": "1.6.51",
+      "version": "1.6.59",
       "repository": "https://github.com/pnggroup/libpng.git",
-      "commit": "49363adcfaf098748d7a4c8c624ad8c45a8c3a86"
+      "commit": "cd952f49f95bb27154ae77dbb103032d95f6e580"
     },
     "libjpeg": {
       "version": "3.2.0",

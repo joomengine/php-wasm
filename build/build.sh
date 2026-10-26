@@ -29,8 +29,11 @@ if [[ -f "$source_dir/.fibers-patched" ]] && [[ $(cat "$source_dir/.fibers-patch
 fi
 fetch_source ".php[\"$minor\"]" "$source_dir"
 if [[ ! -f "$source_dir/.fibers-patched" ]]; then
-  patch -d "$source_dir" -p1 --fuzz=0 < "$fiber_patch"
+  source_fingerprint=$(cat "$source_dir/.source-ready")
+  rm -f "$source_dir/.source-ready"
+  patch -d "$source_dir" -p1 --fuzz=0 --batch --forward < "$fiber_patch"
   printf '%s\n' "$fiber_fingerprint" > "$source_dir/.fibers-patched"
+  printf '%s\n' "$source_fingerprint" > "$source_dir/.source-ready"
 fi
 output="$ROOT/dist/php/$minor"
 mkdir -p "$output/licenses"

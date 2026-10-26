@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { createPHP } from '../src/index.mjs';
 import { decode, directEngineOptions, encode, engineOptions, headerValues, installFixtures, phpVersion } from './helpers.mjs';
@@ -281,6 +282,32 @@ echo json_encode([
     const result = await php.run({ script: '/workspace/extensions.php' });
     assert.equal(result.exitCode, 0, decode(result.stderr));
     assert.deepEqual(JSON.parse(decode(result.stdout)), { dom: 'Joomla', mbstring: 'ÜBER', intl: 'é', zip: 'extension payload', zlib: 'compressed text', openssl: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad', gd: [2, 3], png: '89504e470d0a1a0a', jpeg: ['ffd8', 2, 3], fileinfo: 'image/jpeg', iconv: 'e9', locale: 'Jan 1, 1970', random: 32, bcmath: '100000000000000000000' });
+  });
+
+  await t.test('compiled and linked native dependencies match the source catalog', async () => {
+    const { libraries } = JSON.parse(await readFile(new URL('../versions.json', import.meta.url), 'utf8'));
+    const result = await php.run({ script: '/workspace/dependency-versions.php' });
+    assert.equal(result.exitCode, 0, decode(result.stderr));
+    const versions = JSON.parse(decode(result.stdout));
+    for (const key of ['openssl_headers', 'openssl_loaded']) {
+      assert.ok(versions[key]?.startsWith(`OpenSSL ${libraries.openssl.version} `), `${key}: ${versions[key]}`);
+    }
+    assert.equal(versions.libxml_headers, libraries.libxml2.version);
+    const [major, minor, patch] = libraries.libxml2.version.split('.').map(Number);
+    assert.equal(versions.libxml_loaded, String(major * 10000 + minor * 100 + patch));
+    assert.equal(versions.libpng_headers, libraries.libpng.version);
+    assert.equal(versions.zlib_headers, libraries.zlib.version);
+    assert.equal(versions.zlib_loaded, libraries.zlib.version);
+    assert.equal(versions.libzip_headers, libraries.libzip.version);
+    assert.equal(versions.libzip_loaded, libraries.libzip.version);
+    assert.equal(versions.icu, libraries.icu.version);
+    assert.equal(versions.oniguruma, libraries.oniguruma.version);
+  });
+
+  await t.test('closing a gzip stream after a forward seek writes only zero-filled data', async () => {
+    const result = await php.run({ script: '/workspace/zlib-seek.php' });
+    assert.equal(result.exitCode, 0, decode(result.stderr));
+    assert.deepEqual(JSON.parse(decode(result.stdout)), [1, 8193, 32781].map(length => ({ length, zero_filled: true })));
   });
 
   await t.test('filesystem binary operations and serialized concurrent execution', async () => {

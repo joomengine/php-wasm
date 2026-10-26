@@ -1,0 +1,19 @@
+From e9415f70eb6a37c4b6b9685b12e8e6ac91c80f54 Mon Sep 17 00:00:00 2001
+Subject: Avoid writing uninitialized data on a gzip zero fill.
+Upstream: https://github.com/madler/zlib/commit/e9415f70eb6a37c4b6b9685b12e8e6ac91c80f54
+
+--- a/gzwrite.c
++++ b/gzwrite.c
+@@ -156,6 +156,11 @@ local int gz_zero(gz_statep state) {
+     unsigned n;
+     z_streamp strm = &(state->strm);
+ 
++    /* allocate memory if this is the first time through -- the input buffer
++       must exist before it is zeroed below */
++    if (state->size == 0 && gz_init(state) == -1)
++        return -1;
++
+     /* consume whatever's left in the input buffer */
+     if (strm->avail_in && gz_comp(state, Z_NO_FLUSH) == -1)
+         return -1;
+
