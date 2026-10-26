@@ -74,7 +74,7 @@ jobs:
       - name: Record tested artifact hashes
         run: node scripts/test-receipt.mjs "$PHP_WASM_VERSION"
       - name: Retain tested engine
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: php-${{ matrix.php }}
           path: dist/
@@ -103,7 +103,7 @@ jobs:
       - name: Verify standalone archive in Node.js
         run: node scripts/smoke-release.mjs
       - name: Retain verified release bundle
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: verified-release
           path: release/
