@@ -26,12 +26,20 @@ export async function readCatalog() {
 
 function validateSource(source, name) {
   if (source.repository) {
+    if (source.fallbackUrls !== undefined) throw new Error(`${name}: fallbackUrls apply only to archives`);
     if (new URL(source.repository).protocol !== 'https:' || !/^[a-f0-9]{40}$/.test(source.commit ?? '')) {
       throw new Error(`${name} requires an HTTPS Git repository and exact commit`);
     }
   } else {
     if (!/^[a-f0-9]{64}$/.test(source.sha256 ?? '')) throw new Error(`${name} requires a SHA-256 digest`);
-    if (new URL(source.url).protocol !== 'https:') throw new Error(`${name} source must use HTTPS`);
+    if (source.fallbackUrls !== undefined && !Array.isArray(source.fallbackUrls)) {
+      throw new Error(`${name}: fallbackUrls must be an array`);
+    }
+    for (const url of [source.url, ...(source.fallbackUrls ?? [])]) {
+      if (typeof url !== 'string' || new URL(url).protocol !== 'https:') {
+        throw new Error(`${name} source URLs must use HTTPS`);
+      }
+    }
   }
 }
 

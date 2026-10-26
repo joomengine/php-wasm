@@ -22,6 +22,16 @@ integration suite before releasing an upgrade. Dependency source/build caches
 are under `.build/` (override with `BUILD`); compilation defaults to four jobs
 (override with `JOBS`).
 
+Archive entries may include `fallbackUrls` for official mirrors serving the
+same bytes. Downloads use bounded retries and HTTPS redirects, and each URL
+must match the entry's SHA-256 before the archive enters the cache. Corrupt
+cached archives are discarded and downloaded again. The zlib fallbacks were
+checked against the checksum published at <https://zlib.net/>.
+
+Run `node --test test/source-downloads.test.mjs` to exercise download failures,
+retries, mirrors, and cache integrity. This local test uses Bash, curl, jq, tar,
+and OpenSSL to create an ephemeral HTTPS fixture; it needs no public network.
+
 Each engine produces `dist/php/<minor>/php.mjs`, `php.wasm`, and `licenses/`.
 The final module is statically linked: no dynamically loaded PHP extension
 packages, side-module ABI matrix, or separate ICU data fetch. PHP source licenses
