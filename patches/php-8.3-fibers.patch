@@ -1,0 +1,266 @@
+--- a/Zend/zend_fibers.c
++++ b/Zend/zend_fibers.c
+@@ -33,11 +33,17 @@
+ #include "zend_fibers.h"
+ #include "zend_fibers_arginfo.h"
+ 
++#ifdef __EMSCRIPTEN__
++# include <emscripten/fiber.h>
++# define ZEND_FIBER_EMSCRIPTEN 1
++# define EMS_FIBER_ASYNCIFY_STACK_SIZE (128 * 1024)
++#endif
++
+ #ifdef HAVE_VALGRIND
+ # include <valgrind/valgrind.h>
+ #endif
+ 
+-#ifdef ZEND_FIBER_UCONTEXT
++#if defined(ZEND_FIBER_UCONTEXT) && !defined(ZEND_FIBER_EMSCRIPTEN)
+ # include <ucontext.h>
+ #endif
+ 
+@@ -92,7 +98,12 @@
+ 	size_t asan_size;
+ #endif
+ 
+-#ifdef ZEND_FIBER_UCONTEXT
++#ifdef ZEND_FIBER_EMSCRIPTEN
++	/* Embedded Emscripten context and Zend-owned Asyncify stack. */
++	emscripten_fiber_t fiber;
++	void *pointer_asyncify;
++	size_t size_asyncify;
++#elif defined(ZEND_FIBER_UCONTEXT)
+ 	/* Embedded ucontext to avoid unnecessary memory allocations. */
+ 	ucontext_t ucontext;
+ #elif BOOST_CONTEXT_SHADOW_STACK
+@@ -153,7 +164,7 @@
+ #endif
+ }
+ 
+-#ifdef ZEND_FIBER_UCONTEXT
++#if defined(ZEND_FIBER_EMSCRIPTEN) || defined(ZEND_FIBER_UCONTEXT)
+ ZEND_TLS zend_fiber_transfer *transfer_data;
+ #else
+ /* boost_context_data is our customized definition of struct transfer_t as
+@@ -206,12 +217,16 @@
+ {
+ 	void *pointer;
+ 	const size_t page_size = zend_fiber_get_page_size();
++#ifdef ZEND_FIBER_EMSCRIPTEN
++	const size_t minimum_stack_size = page_size;
++#else
+ 	const size_t minimum_stack_size = page_size + ZEND_FIBER_GUARD_PAGES * page_size
+ #ifdef __SANITIZE_ADDRESS__
+ 	// necessary correction due to ASAN redzones
+ 	* 6
+ #endif
+ 	;
++#endif
+ 
+ 	if (size < minimum_stack_size) {
+ 		zend_throw_exception_ex(NULL, 0, "Fiber stack size is too small, it needs to be at least %zu bytes", minimum_stack_size);
+@@ -219,6 +234,25 @@
+ 	}
+ 
+ 	const size_t stack_size = (size + page_size - 1) / page_size * page_size;
++
++#ifdef ZEND_FIBER_EMSCRIPTEN
++	pointer = aligned_alloc(16, stack_size);
++
++	if (!pointer) {
++		zend_throw_exception_ex(NULL, 0, "Fiber stack allocate failed: aligned_alloc failed: %s (%d)", strerror(errno), errno);
++		return NULL;
++	}
++
++	ZEND_ASSERT(((uintptr_t) pointer & 0xf) == 0 && "Emscripten fiber stacks must be 16-byte aligned");
++
++	void *pointer_asyncify = malloc(EMS_FIBER_ASYNCIFY_STACK_SIZE);
++
++	if (!pointer_asyncify) {
++		zend_throw_exception_ex(NULL, 0, "Fiber Asyncify stack allocate failed: malloc failed: %s (%d)", strerror(errno), errno);
++		free(pointer);
++		return NULL;
++	}
++#else
+ 	const size_t alloc_size = stack_size + ZEND_FIBER_GUARD_PAGES * page_size;
+ 
+ #ifdef ZEND_WIN32
+@@ -262,13 +296,25 @@
+ 	}
+ # endif
+ #endif
++#endif
+ 
++#ifdef ZEND_FIBER_EMSCRIPTEN
++	zend_fiber_stack *stack = ecalloc(1, sizeof(zend_fiber_stack));
++#else
+ 	zend_fiber_stack *stack = emalloc(sizeof(zend_fiber_stack));
++#endif
+ 
++#ifdef ZEND_FIBER_EMSCRIPTEN
++	stack->pointer = pointer;
++	stack->size = stack_size;
++	stack->pointer_asyncify = pointer_asyncify;
++	stack->size_asyncify = EMS_FIBER_ASYNCIFY_STACK_SIZE;
++#else
+ 	stack->pointer = (void *) ((uintptr_t) pointer + ZEND_FIBER_GUARD_PAGES * page_size);
+ 	stack->size = stack_size;
++#endif
+ 
+-#if !defined(ZEND_FIBER_UCONTEXT) && BOOST_CONTEXT_SHADOW_STACK
++#if !defined(ZEND_FIBER_EMSCRIPTEN) && !defined(ZEND_FIBER_UCONTEXT) && BOOST_CONTEXT_SHADOW_STACK
+ 	/* shadow stack saves ret address only, need less space */
+ 	stack->ss_size= stack_size >> 5;
+ 
+@@ -304,6 +350,10 @@
+ 	VALGRIND_STACK_DEREGISTER(stack->valgrind_stack_id);
+ #endif
+ 
++#ifdef ZEND_FIBER_EMSCRIPTEN
++	free(stack->pointer_asyncify);
++	free(stack->pointer);
++#else
+ 	const size_t page_size = zend_fiber_get_page_size();
+ 
+ 	void *pointer = (void *) ((uintptr_t) stack->pointer - ZEND_FIBER_GUARD_PAGES * page_size);
+@@ -319,8 +369,9 @@
+ #else
+ 	munmap(pointer, stack->size + ZEND_FIBER_GUARD_PAGES * page_size);
+ #endif
++#endif
+ 
+-#if !defined(ZEND_FIBER_UCONTEXT) && BOOST_CONTEXT_SHADOW_STACK
++#if !defined(ZEND_FIBER_EMSCRIPTEN) && !defined(ZEND_FIBER_UCONTEXT) && BOOST_CONTEXT_SHADOW_STACK
+ 	munmap(stack->ss_base, stack->ss_size);
+ #endif
+ 
+@@ -351,14 +402,19 @@
+ }
+ #endif
+ 
+-#ifdef ZEND_FIBER_UCONTEXT
++#ifdef ZEND_FIBER_EMSCRIPTEN
++static void zend_fiber_trampoline(void *argument)
++#elif defined(ZEND_FIBER_UCONTEXT)
+ static ZEND_NORETURN void zend_fiber_trampoline(void)
+ #else
+ static ZEND_NORETURN void zend_fiber_trampoline(boost_context_data data)
+ #endif
+ {
+ 	/* Initialize transfer struct with a copy of passed data. */
+-#ifdef ZEND_FIBER_UCONTEXT
++#ifdef ZEND_FIBER_EMSCRIPTEN
++	(void) argument;
++	zend_fiber_transfer transfer = *transfer_data;
++#elif defined(ZEND_FIBER_UCONTEXT)
+ 	zend_fiber_transfer transfer = *transfer_data;
+ #else
+ 	zend_fiber_transfer transfer = *data.transfer;
+@@ -370,7 +426,7 @@
+ 	__sanitizer_finish_switch_fiber(NULL, &from->stack->asan_pointer, &from->stack->asan_size);
+ #endif
+ 
+-#ifndef ZEND_FIBER_UCONTEXT
++#if !defined(ZEND_FIBER_EMSCRIPTEN) && !defined(ZEND_FIBER_UCONTEXT)
+ 	/* Get the context that resumed us and update its handle to allow for symmetric coroutines. */
+ 	from->handle = data.handle;
+ #endif
+@@ -388,8 +444,13 @@
+ 	/* Final context switch, the fiber must not be resumed afterwards! */
+ 	zend_fiber_switch_context(&transfer);
+ 
++#ifdef ZEND_FIBER_EMSCRIPTEN
++	/* Allow Asyncify to finish unwinding the completed fiber's callback. */
++	return;
++#else
+ 	/* Abort here because we are in an inconsistent program state. */
+ 	abort();
++#endif
+ }
+ 
+ ZEND_API void zend_fiber_switch_block(void)
+@@ -416,7 +477,20 @@
+ 		return FAILURE;
+ 	}
+ 
+-#ifdef ZEND_FIBER_UCONTEXT
++#ifdef ZEND_FIBER_EMSCRIPTEN
++	emscripten_fiber_t *handle = &context->stack->fiber;
++
++	emscripten_fiber_init(
++		handle,
++		(em_arg_callback_func) zend_fiber_trampoline,
++		NULL,
++		context->stack->pointer,
++		context->stack->size,
++		context->stack->pointer_asyncify,
++		context->stack->size_asyncify);
++
++	context->handle = handle;
++#elif defined(ZEND_FIBER_UCONTEXT)
+ 	ucontext_t *handle = &context->stack->ucontext;
+ 
+ 	getcontext(handle);
+@@ -509,7 +583,14 @@
+ 		to->stack->asan_size);
+ #endif
+ 
+-#ifdef ZEND_FIBER_UCONTEXT
++#ifdef ZEND_FIBER_EMSCRIPTEN
++	transfer_data = transfer;
++
++	emscripten_fiber_swap(from->handle, to->handle);
++
++	/* Copy transfer struct because it might live on the other fiber's stack that will eventually be destroyed. */
++	*transfer = *transfer_data;
++#elif defined(ZEND_FIBER_UCONTEXT)
+ 	transfer_data = transfer;
+ 
+ 	swapcontext(from->handle, to->handle);
+@@ -525,7 +606,7 @@
+ 
+ 	to = transfer->context;
+ 
+-#ifndef ZEND_FIBER_UCONTEXT
++#if !defined(ZEND_FIBER_EMSCRIPTEN) && !defined(ZEND_FIBER_UCONTEXT)
+ 	/* Get the context that resumed us and update its handle to allow for symmetric coroutines. */
+ 	to->handle = data.handle;
+ #endif
+@@ -1066,7 +1147,24 @@
+ {
+ 	zend_fiber_context *context = ecalloc(1, sizeof(zend_fiber_context));
+ 
+-#if defined(__SANITIZE_ADDRESS__) || defined(ZEND_FIBER_UCONTEXT)
++#ifdef ZEND_FIBER_EMSCRIPTEN
++	context->stack = ecalloc(1, sizeof(zend_fiber_stack));
++	context->stack->pointer_asyncify = malloc(EMS_FIBER_ASYNCIFY_STACK_SIZE);
++
++	if (!context->stack->pointer_asyncify) {
++		efree(context->stack);
++		efree(context);
++		zend_error_noreturn(E_ERROR, "Main fiber Asyncify stack allocation failed");
++	}
++
++	context->stack->size_asyncify = EMS_FIBER_ASYNCIFY_STACK_SIZE;
++	context->handle = &context->stack->fiber;
++
++	emscripten_fiber_init_from_current_context(
++		context->handle,
++		context->stack->pointer_asyncify,
++		context->stack->size_asyncify);
++#elif defined(__SANITIZE_ADDRESS__) || defined(ZEND_FIBER_UCONTEXT)
+ 	// Main fiber stack is only needed if ASan or ucontext is enabled.
+ 	context->stack = emalloc(sizeof(zend_fiber_stack));
+ 
+@@ -1086,7 +1184,10 @@
+ 
+ void zend_fiber_shutdown(void)
+ {
+-#if defined(__SANITIZE_ADDRESS__) || defined(ZEND_FIBER_UCONTEXT)
++#ifdef ZEND_FIBER_EMSCRIPTEN
++	free(EG(main_fiber_context)->stack->pointer_asyncify);
++	efree(EG(main_fiber_context)->stack);
++#elif defined(__SANITIZE_ADDRESS__) || defined(ZEND_FIBER_UCONTEXT)
+ 	efree(EG(main_fiber_context)->stack);
+ #endif
+ 

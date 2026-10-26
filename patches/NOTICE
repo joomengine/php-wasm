@@ -1,0 +1,19 @@
+php-wasm compatibility patches
+
+Copyright 2019-2024 Sean Morris
+Copyright 2018-2020 Oraoto
+
+Extracted from seanmorris/php-wasm commit
+1e1fb6703730759181e84c62bce35ee9129febb9:
+https://github.com/seanmorris/php-wasm/tree/1e1fb6703730759181e84c62bce35ee9129febb9/patch
+
+Upstream offers Apache License, Version 2.0 OR GNU General Public License,
+Version 2. These copies use the Apache License, Version 2.0 option; the full
+license is in ../LICENSE. PHP patches have been reduced to the Zend fiber
+implementation and their paths adjusted. Emscripten patch is unchanged.
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.

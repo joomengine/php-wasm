@@ -1,0 +1,24 @@
+{
+  "name": "@joomengine/php-wasm",
+  "version": "0.1.0",
+  "description": "Independent PHP WebAssembly runtime for browser workers and Node.js",
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": { "node": ">=24.0.0" },
+  "repository": { "type": "git", "url": "https://github.com/joomengine/php-wasm.git" },
+  "homepage": "https://github.com/joomengine/php-wasm#readme",
+  "bugs": { "url": "https://github.com/joomengine/php-wasm/issues" },
+  "exports": { ".": { "types": "./types/index.d.ts", "import": "./src/index.mjs" } },
+  "types": "./types/index.d.ts",
+  "files": ["src", "types", "README.md", "LICENSE", "NOTICE", "SECURITY.md", "CONTRIBUTING.md", "docs"],
+  "scripts": {
+    "check": "node scripts/check.mjs",
+    "build": "bash build/build.sh",
+    "manifest": "node scripts/manifest.mjs",
+    "test": "npm run check && npm run test:integration && npm run test:browser",
+    "test:integration": "node --test test/runtime.test.mjs",
+    "test:browser": "node --test test/browser.test.mjs",
+    "release:package": "node scripts/package-release.mjs"
+  },
+  "devDependencies": { "playwright": "1.64.1", "yaml": "2.9.1" }
+}

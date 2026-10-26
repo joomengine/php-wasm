@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JoomEngine PHP WebAssembly runtime</title>
+  <style>
+    :root { color-scheme: light dark; font: 16px/1.5 system-ui, sans-serif; }
+    body { max-width: 60rem; margin: 3rem auto; padding: 0 1.25rem; }
+    h1 { line-height: 1.15; font-size: 2rem; }
+    label { display: block; font-weight: 600; margin: 1rem 0 .4rem; }
+    textarea, pre { box-sizing: border-box; width: 100%; border: 1px solid #8886; border-radius: .4rem; padding: 1rem; font: .95rem/1.5 ui-monospace, monospace; }
+    textarea { min-height: 13rem; resize: vertical; }
+    pre { min-height: 5rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+    button, select { font: inherit; padding: .45rem .8rem; }
+    button { margin: 1rem .75rem 0 0; cursor: pointer; }
+    button:disabled { cursor: wait; }
+    #status { display: inline; }
+    .note { opacity: .75; }
+  </style>
+</head>
+<body>
+  <h1>PHP, running in your browser.</h1>
+  <p>This example executes the real PHP CLI in a dedicated WebAssembly worker. Files live in memory for this session.</p>
+  <label for="version">PHP version</label>
+  <select id="version"><option>8.3</option><option selected>8.4</option><option>8.5</option></select>
+  <label for="code">PHP script</label>
+  <textarea id="code" spellcheck="false">&lt;?php
+echo 'Hello from PHP ' . PHP_VERSION . "\n";
+echo 'SAPI: ' . PHP_SAPI . "\n";
+echo 'Arguments: ' . json_encode($argv) . "\n";
+echo 'Extensions: ' . implode(', ', get_loaded_extensions()) . "\n";
+</textarea>
+  <button id="run" type="button">Run PHP</button>
+  <p id="status" role="status" aria-live="polite">Ready</p>
+  <label for="output">Output</label>
+  <pre id="output" aria-live="polite"></pre>
+  <p class="note">Build the runtime assets, then serve this repository over HTTP. The manifest is loaded from <code>../dist/runtime-manifest.json</code>. No PHP server is needed.</p>
+  <script type="module">
+    import { createPHP } from '../src/index.mjs';
+
+    const button = document.querySelector('#run');
+    const version = document.querySelector('#version');
+    const output = document.querySelector('#output');
+    const status = document.querySelector('#status');
+    let php;
+    let loadedVersion;
+
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      version.disabled = true;
+      output.textContent = '';
+      try {
+        if (!php || loadedVersion !== version.value) {
+          status.textContent = `Loading PHP ${version.value}…`;
+          await php?.close();
+          php = undefined;
+          php = await createPHP({ manifestUrl: new URL('../dist/runtime-manifest.json', import.meta.url).href, phpVersion: version.value });
+          loadedVersion = version.value;
+        }
+        status.textContent = 'Running…';
+        await php.fs.writeFile('/workspace/example.php', document.querySelector('#code').value);
+        const result = await php.run({ script: '/workspace/example.php', args: ['from-browser'] });
+        const decoder = new TextDecoder();
+        output.textContent = decoder.decode(result.stdout) + decoder.decode(result.stderr);
+        status.textContent = `Finished with exit code ${result.exitCode}`;
+      } catch (error) {
+        output.textContent = `${error.code ?? 'ERROR'}: ${error.message}`;
+        status.textContent = 'Execution failed';
+        await php?.close();
+        php = undefined;
+      } finally {
+        button.disabled = false;
+        version.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

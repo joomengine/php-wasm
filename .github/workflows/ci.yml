@@ -1,0 +1,82 @@
+name: Runtime checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    outputs:
+      php: ${{ steps.catalog.outputs.php }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - id: catalog
+        run: echo "php=$(node scripts/catalog.mjs matrix)" >> "$GITHUB_OUTPUT"
+
+  engine:
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ${{ fromJSON(needs.validate.outputs.php) }}
+    env:
+      PHP_WASM_VERSION: ${{ matrix.php }}
+      PHP_WASM_MANIFEST: dist/runtime-manifest.json
+      PHP_WASM_BROWSERS: chromium,firefox
+      SOURCE_DATE_EPOCH: '0'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install host build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y build-essential autoconf automake libtool pkg-config bison re2c cmake ninja-build jq curl xz-utils unzip
+      - run: npm ci --ignore-scripts
+      - run: npx playwright install --with-deps chromium firefox
+      - name: Build PHP and native dependencies
+        shell: bash
+        run: |
+          bash build/setup-emsdk.sh "$RUNNER_TEMP/emsdk"
+          source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+          bash build/build.sh "$PHP_WASM_VERSION"
+          node scripts/manifest.mjs --php "$PHP_WASM_VERSION"
+      - name: Exercise real PHP in Node.js
+        run: npm run test:integration
+      - name: Exercise real PHP in Chromium and Firefox
+        run: npm run test:browser
+      - name: Record tested artifact hashes
+        run: node scripts/test-receipt.mjs "$PHP_WASM_VERSION"
+      - name: Retain tested engine
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: php-${{ matrix.php }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
