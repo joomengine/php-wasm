@@ -69,7 +69,7 @@ export function runOptions(input) {
   if (!Array.isArray(args)) fail('INVALID_ARGUMENT', 'args must be an array of strings');
   return {
     script: workspacePath(input.script, 'script'),
-    args: args.map((arg, index) => string(arg, `args[${index}]`, { empty: true })),
+    args: Array.from(args, (arg, index) => string(arg, `args[${index}]`, { empty: true })),
     cwd: workspacePath(input.cwd ?? '/workspace', 'cwd'),
     env: environment(input.env), ini: iniText(input.ini),
     stdin: input.stdin === undefined ? new Uint8Array() : bytes(input.stdin, 'stdin'),
@@ -85,7 +85,7 @@ export function requestOptions(input) {
   if (!/^[!#$%&'*+.^_`|~0-9A-Z-]+$/.test(method)) fail('INVALID_ARGUMENT', 'Invalid HTTP method');
   const headers = input.headers ?? [];
   if (!Array.isArray(headers)) fail('INVALID_ARGUMENT', 'headers must be an array of [name, value] pairs');
-  const normalized = headers.map((pair) => {
+  const normalized = Array.from(headers, (pair) => {
     if (!Array.isArray(pair) || pair.length !== 2) fail('INVALID_ARGUMENT', 'Each header must be a [name, value] pair');
     const name = string(pair[0], 'header name').toLowerCase();
     const value = string(pair[1], 'header value', { empty: true });

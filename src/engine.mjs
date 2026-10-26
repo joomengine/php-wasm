@@ -115,9 +115,16 @@ export class Engine {
     const resolved = await resolveEngine(this.options);
     const imported = await importEngine(resolved.module.data);
     if (typeof imported.default !== 'function') fail('ENGINE_ABI_MISMATCH', 'Engine module must export an Emscripten factory as default');
+    const compiled = await WebAssembly.compile(resolved.wasm.data);
     const module = await imported.default({
       noInitialRun: true,
-      wasmBinary: resolved.wasm.data,
+      // A blob module has no relative URL base. Instantiate verified bytes directly,
+      // bypassing Emscripten's eager import.meta.url sidecar resolution.
+      instantiateWasm: (imports, receive) => {
+        const instance = new WebAssembly.Instance(compiled, imports);
+        receive(instance, compiled);
+        return instance.exports;
+      },
       locateFile: (name) => {
         if (!name.endsWith('.wasm')) fail('ENGINE_ABI_MISMATCH', `Unexpected engine sidecar: ${name}`);
         return resolved.wasm.url.href;
@@ -129,7 +136,8 @@ export class Engine {
       printErr: (line) => this.output?.append('stderr', `${line}\n`),
     });
     this.module = module;
-    if (!module.FS || !module.ENV || !module.HEAPU8 || typeof module.ccall !== 'function' || typeof module._malloc !== 'function') {
+    const requiredFunctions = ['ccall', '_malloc', '_free', 'lengthBytesUTF8', 'stringToUTF8', '_php_wasm_run', '_php_wasm_exit_code', '_php_wasm_abi_version', '_php_wasm_version'];
+    if (!module.FS || !module.ENV || !module.HEAPU8 || requiredFunctions.some((name) => typeof module[name] !== 'function')) {
       fail('ENGINE_ABI_MISMATCH', 'Engine is missing required Emscripten runtime exports');
     }
     if (module.ccall('php_wasm_abi_version', 'number', [], []) !== 1) fail('ENGINE_ABI_MISMATCH', 'Native engine ABI must equal 1');
@@ -195,7 +203,13 @@ export class Engine {
         view.setUint32(argvPointer + pointers.length * 4, 0, true);
       }
       enteredNative = true;
-      const exitCode = await module.ccall('php_wasm_run', 'number', ['string', 'number', 'number', 'number'], [input.script, mode === 'run' ? 1 : 0, pointers.length, argvPointer], { async: true });
+      await module.ccall('php_wasm_run', 'number', ['string', 'number', 'number', 'number'], [input.script, mode === 'run' ? 1 : 0, pointers.length, argvPointer], { async: true });
+      // Asyncify can resume through a void PHP Fiber entrypoint, losing the direct C return.
+      // The native completion status also detects a premature Asyncify resolution.
+      const exitCode = module.ccall('php_wasm_exit_code', 'number', [], []);
+      if (!Number.isInteger(exitCode) || exitCode < 0 || exitCode > 255) {
+        fail('ENGINE_PROTOCOL_ERROR', 'Native execution did not complete with a valid exit status; the runtime has been terminated');
+      }
       if (this.output.error) throw this.output.error;
       const stderr = this.output.join('stderr');
       return mode === 'run'

@@ -8,12 +8,16 @@ Fiber. Do not run two invocations on one module at once.
 
 ```c
 int php_wasm_run(const char *script, int cli, int argc, char **argv);
+int php_wasm_exit_code(void);
 ```
 
 `script` is an absolute virtual filesystem path. `cli` is 1 for CLI and 0 for
 HTTP. CLI arguments include the script path at `argv[0]`; PHP executable flags
 are not accepted here. The caller keeps argument buffers alive until execution
-settles. The return value is PHP's exit status. A new PHP module/request lifecycle
+settles. After awaiting the call, read `php_wasm_exit_code()` for PHP's exit
+status (`-1` means still running). This is reliable even when an Emscripten Fiber
+resumes through a void callback and discards the asynchronous call's return value.
+A new PHP module/request lifecycle
 is started for each invocation; filesystem contents survive. `PHP_SAPI` is
 `cli` or `cgi-fcgi`, respectively. Commands cannot launch a host shell or process.
 
@@ -37,6 +41,11 @@ Before calling, set `Module.phpWasm`:
 startup. The host supplies sensible defaults and exposes an allowlist to users.
 Output callbacks receive copies, so memory growth does not invalidate them.
 Header lines remain an array to preserve repeated `Set-Cookie` values.
+
+The host SAPI rebuilds libc's environment for every invocation. It reserves
+`USE_ZEND_ALLOC=0` and `USE_TRACKED_ALLOC=1`: PHP's tracked malloc mode retains
+request cleanup and memory-limit accounting without relying on native virtual
+memory mappings that Emscripten cannot reproduce.
 
 At module creation also supply Emscripten `stdin`, `stdout`, and `stderr`
 callbacks. These operate on raw bytes and capture PHP standard streams (such as

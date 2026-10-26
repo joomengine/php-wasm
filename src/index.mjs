@@ -204,7 +204,7 @@ export async function createPHP(input) {
   let worker;
   if (typeof process !== 'undefined' && process.versions?.node) {
     const { Worker } = await import('node:worker_threads');
-    worker = new Worker(url, { type: 'module', execArgv: process.execArgv.filter((arg) => !arg.startsWith('--input-type')) });
+    worker = new Worker(url, { type: 'module', execArgv: [] });
   } else {
     if (typeof Worker === 'undefined') fail('WORKER_UNAVAILABLE', 'This environment does not support dedicated module workers');
     worker = new Worker(url, { type: 'module', name: 'joomengine-php' });

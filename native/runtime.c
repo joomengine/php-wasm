@@ -20,9 +20,13 @@
 static size_t body_offset;
 static zval *server_variables;
 static int running;
+static int completed_exit_code = -1;
 
 EMSCRIPTEN_KEEPALIVE int php_wasm_abi_version(void) { return 1; }
 EMSCRIPTEN_KEEPALIVE const char *php_wasm_version(void) { return PHP_VERSION; }
+/* Asyncify may resume via a void Fiber entrypoint, losing the outer C return
+ * value. The completed result remains explicit and independent of that path. */
+EMSCRIPTEN_KEEPALIVE int php_wasm_exit_code(void) { return running ? -1 : completed_exit_code; }
 
 /* PHP's php://fd wrapper needs this legacy POSIX function, which Emscripten
  * declares but does not include in libc. FS accepts 0..MAX_OPEN_FDS inclusive. */
@@ -104,6 +108,7 @@ EM_ASYNC_JS(char *, host_call, (const char *name, const char *payload, int *fail
         if (typeof Module.phpWasm.hostCall !== 'function') throw new Error('No host bridge registered');
         value = await Module.phpWasm.hostCall(UTF8ToString(name), UTF8ToString(payload));
         if (typeof value !== 'string') throw new TypeError('Host bridge must return a string');
+        if (value.includes(String.fromCharCode(0))) throw new TypeError('Host bridge response cannot contain NUL bytes');
         HEAP32[failed >> 2] = 0;
     } catch (error) {
         value = String(error?.message ?? error);
@@ -214,15 +219,16 @@ EMSCRIPTEN_KEEPALIVE int php_wasm_run(const char *script, int cli, int argc, cha
 {
     if (running) return 70;
     running = 1; body_offset = 0;
+    completed_exit_code = -1;
     /* Emscripten's JavaScript ENV map is cached by libc on initialization. */
     clearenv();
-    if (!host_environment()) { running = 0; return 70; }
+    if (!host_environment()) { running = 0; return completed_exit_code = 70; }
     /* Zend's normal allocator splits mmap regions, which the browser heap
      * cannot unmap. PHP's tracked system allocator retains request cleanup
      * and memory-limit accounting while using Emscripten malloc/free. */
     if (setenv("USE_ZEND_ALLOC", "0", 1) || setenv("USE_TRACKED_ALLOC", "1", 1)) {
         running = 0;
-        return 70;
+        return completed_exit_code = 70;
     }
     volatile int exit_status = 1, request_started = 0;
     int module_started = 0;
@@ -234,7 +240,7 @@ EMSCRIPTEN_KEEPALIVE int php_wasm_run(const char *script, int cli, int argc, cha
     if (!method || !uri || !query || !type || !cookie || !ini || !filename) {
         free(method); free(uri); free(query); free(type); free(cookie); free(ini); free(filename);
         running = 0;
-        return 70;
+        return completed_exit_code = 70;
     }
 
     wasm_sapi.name = cli ? "cli" : "cgi-fcgi";
@@ -247,6 +253,9 @@ EMSCRIPTEN_KEEPALIVE int php_wasm_run(const char *script, int cli, int argc, cha
     wasm_sapi.additional_functions = bridge_functions;
     if (wasm_sapi.startup(&wasm_sapi) == FAILURE) goto cleanup;
     module_started = 1;
+    EG(exit_status) = 0;
+    /* sapi_activate only parses POST bodies when a server context exists. */
+    SG(server_context) = cli ? NULL : &wasm_sapi;
     SG(options) |= SAPI_OPTION_NO_CHDIR;
     SG(request_info).request_method = cli ? NULL : method;
     SG(request_info).request_uri = uri;
@@ -268,6 +277,7 @@ EMSCRIPTEN_KEEPALIVE int php_wasm_run(const char *script, int cli, int argc, cha
             request_started = 1;
             if (cli) {
                 SG(headers_sent) = 1;
+                SG(request_info).no_headers = 1;
                 register_cli_streams();
             }
             zend_file_handle file;
@@ -294,6 +304,7 @@ cleanup:
     sapi_shutdown();
     free(method); free(uri); free(query); free(type); free(cookie); free(ini); free(filename);
     server_variables = NULL;
+    completed_exit_code = (unsigned int) exit_status & 255u;
     running = 0;
-    return exit_status;
+    return completed_exit_code;
 }

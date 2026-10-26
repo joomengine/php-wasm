@@ -3,6 +3,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 BUILD=${BUILD:-"$ROOT/.build"}
 mkdir -p "$BUILD"
+BUILD=$(cd "$BUILD" && pwd)
 exec 9>"$BUILD/dependencies.lock"
 flock 9
 source "$ROOT/build/common.sh"
@@ -37,7 +38,7 @@ cmake_library libzip -DBUILD_TOOLS=OFF -DBUILD_REGRESS=OFF -DBUILD_EXAMPLES=OFF 
 (cd "$SOURCES/openssl"
   env CC=emcc CXX=em++ AR=emar RANLIB=emranlib CROSS_COMPILE= \
     ./Configure linux-generic32 no-shared no-asm no-threads no-dso no-module no-engine \
-    no-tests no-apps no-ui-console no-sock no-dgram no-async -DNO_FORK \
+    no-tests no-apps no-ui-console no-dgram no-async -DNO_FORK \
     --prefix="$PREFIX" --libdir=lib
   emmake make -j"$JOBS" build_sw
   emmake make install_sw)

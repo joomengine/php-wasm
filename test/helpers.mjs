@@ -6,7 +6,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const root = fileURLToPath(new URL('../', import.meta.url));
 export const phpVersion = process.env.PHP_WASM_VERSION ?? '8.4';
-export const engineDirectory = resolve(root, 'dist/php', phpVersion);
+export const engineDirectory = process.env.PHP_WASM_ENGINE_DIR
+  ? resolve(root, process.env.PHP_WASM_ENGINE_DIR)
+  : resolve(root, 'dist/php', phpVersion);
 export const decode = value => new TextDecoder().decode(value);
 export const encode = value => new TextEncoder().encode(value);
 

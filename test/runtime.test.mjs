@@ -173,6 +173,13 @@ echo json_encode(['name' => $file['name'], 'type' => $file['type'], 'size' => $f
     assert.equal(JSON.parse(decode(healthy.stdout)).sapi, 'cli');
   });
 
+  await t.test('CLI exit codes follow eight-bit process exit semantics', async () => {
+    await php.fs.writeFile('/workspace/exit-negative.php', '<?php exit(-1);');
+    await php.fs.writeFile('/workspace/exit-large.php', '<?php exit(300);');
+    assert.equal((await php.run({ script: '/workspace/exit-negative.php' })).exitCode, 255);
+    assert.equal((await php.run({ script: '/workspace/exit-large.php' })).exitCode, 44);
+  });
+
   await t.test('shutdown exit codes and fatal errors are recovered on the next invocation', async () => {
     await php.fs.writeFile('/workspace/shutdown-exit.php', '<?php register_shutdown_function(function () { exit(7); }); echo "shutdown pending";');
     const exited = await php.run({ script: '/workspace/shutdown-exit.php' });
@@ -184,6 +191,16 @@ echo json_encode(['name' => $file['name'], 'type' => $file['type'], 'size' => $f
     assert.match(decode(failed.stderr), /shutdown failed intentionally/);
     const missing = await php.run({ script: '/workspace/does-not-exist.php', ini: { display_errors: 'stderr' } });
     assert.notEqual(missing.exitCode, 0);
+    const healthy = await php.run({ script: '/workspace/cli.php' });
+    assert.equal(healthy.exitCode, 0);
+    assert.equal(JSON.parse(decode(healthy.stdout)).sapi, 'cli');
+  });
+
+  await t.test('PHP memory_limit exhaustion returns a failure and the next invocation recovers', async () => {
+    await php.fs.writeFile('/workspace/memory-limit.php', '<?php $large = str_repeat("x", 16 * 1024 * 1024); echo strlen($large);');
+    const limited = await php.run({ script: '/workspace/memory-limit.php', ini: { memory_limit: '8M', display_errors: 'stderr' } });
+    assert.notEqual(limited.exitCode, 0);
+    assert.match(decode(limited.stderr), /allowed memory size|memory exhausted/i);
     const healthy = await php.run({ script: '/workspace/cli.php' });
     assert.equal(healthy.exitCode, 0);
     assert.equal(JSON.parse(decode(healthy.stdout)).sapi, 'cli');
@@ -300,6 +317,7 @@ test('PHP can await asynchronous host bridge calls without blocking or deadlocki
       return JSON.stringify({ codes });
     },
     rejected: async () => { throw new Error('expected host failure'); },
+    nulResult: async () => 'a\0b',
   } });
   try {
     await php.fs.writeFile('/workspace/bridge.php', `<?php
@@ -307,6 +325,9 @@ $double = json_decode(php_wasm_host_call('double', json_encode(['value' => 21]))
 $reentry = json_decode(php_wasm_host_call('reentry', '{}'), true, 512, JSON_THROW_ON_ERROR);
 try { php_wasm_host_call('rejected', '{}'); }
 catch (Throwable $error) { $failure = $error->getMessage(); }
+$nulRejected = false;
+try { php_wasm_host_call('nulResult', '{}'); }
+catch (Throwable $error) { $nulRejected = str_contains($error->getMessage(), 'NUL'); }
 $fiber = new Fiber(function () {
   $first = json_decode(php_wasm_host_call('double', '{"value":10}'), true, 512, JSON_THROW_ON_ERROR);
   $resumed = Fiber::suspend($first['result']);
@@ -314,10 +335,10 @@ $fiber = new Fiber(function () {
 });
 $suspended = $fiber->start();
 $fiber->resume(21);
-echo json_encode([$double, $reentry, $failure, [$suspended, $fiber->getReturn()]], JSON_THROW_ON_ERROR);`);
+echo json_encode([$double, $reentry, $failure, [$suspended, $fiber->getReturn()], $nulRejected], JSON_THROW_ON_ERROR);`);
     const result = await php.run({ script: '/workspace/bridge.php' });
     assert.equal(result.exitCode, 0, decode(result.stderr));
-    assert.deepEqual(JSON.parse(decode(result.stdout)), [{ result: 42 }, { codes: ['REENTRANT_CALL', 'REENTRANT_CALL'] }, 'expected host failure', [20, 42]]);
+    assert.deepEqual(JSON.parse(decode(result.stdout)), [{ result: 42 }, { codes: ['REENTRANT_CALL', 'REENTRANT_CALL'] }, 'expected host failure', [20, 42], true]);
     const repeated = await php.run({ script: '/workspace/bridge.php' });
     assert.equal(repeated.exitCode, 0, decode(repeated.stderr));
   } finally { await php.close(); }

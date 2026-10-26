@@ -128,11 +128,20 @@ on GitHub Pages. Its PHP engine does not require a server, threads or special
 cross-origin isolation headers. Persistent browser instances require IndexedDB
 and Web Locks on a secure origin, such as HTTPS or localhost.
 
+If the embedding site sets a Content Security Policy, allow same-origin module
+workers, `blob:` script imports, WebAssembly compilation (`'wasm-unsafe-eval'`)
+and connections to the chosen asset origins. The loader imports the verified
+JavaScript bytes; it does not bypass integrity checks with a second URL import.
+
 Release assets contain the public API, all tested PHP engines, their licenses,
 a runtime manifest, checksums and verification receipts. Extract the release
 archive and serve its `package/` directory. Import `package/src/index.mjs` and
 point `manifestUrl` at `package/runtime-manifest.json`. Keep these files from the
 same release together. No npm publication is required.
+
+Deploy each release under a versioned directory, for example
+`runtimes/php-wasm/0.1.0/`, rather than replacing files from an earlier release
+in place. This prevents browser and CDN caches from mixing release assets.
 
 The playground can automatically resolve the latest stable GitHub release,
 verify and test it, then copy its assets into a Pages deployment. Its deployment
