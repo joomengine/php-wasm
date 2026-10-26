@@ -47,6 +47,23 @@ export async function installFixtures(php) {
   }
 }
 
+export async function directEngineOptions() {
+  const options = await engineOptions();
+  if (options.engine) return options;
+  const url = new URL(options.manifestUrl);
+  const source = url.protocol === 'file:'
+    ? await readFile(url, 'utf8')
+    : await fetch(url).then(response => {
+      if (!response.ok) throw new Error(`Unable to read test manifest: HTTP ${response.status}`);
+      return response.text();
+    });
+  const manifest = JSON.parse(source);
+  const engine = structuredClone(manifest.engines[phpVersion]);
+  engine.module.url = new URL(engine.module.url, url).href;
+  engine.wasm.url = new URL(engine.wasm.url, url).href;
+  return { engine };
+}
+
 export function headerValues(response, name) {
   return response.headers.filter(([key]) => key.toLowerCase() === name.toLowerCase()).map(([, value]) => value);
 }

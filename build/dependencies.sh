@@ -2,6 +2,9 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 BUILD=${BUILD:-"$ROOT/.build"}
+mkdir -p "$BUILD"
+exec 9>"$BUILD/dependencies.lock"
+flock 9
 source "$ROOT/build/common.sh"
 fingerprint=$({ sha256sum "$ROOT/versions.json" "$ROOT/build/dependencies.sh" "$ROOT/build/common.sh" "$ROOT/build/setup-emsdk.sh" "$ROOT"/patches/emscripten-*.patch; emcc --version; printf '%s\n' "$CFLAGS" "$CXXFLAGS" "$CPPFLAGS" "$LDFLAGS"; } | sha256sum | cut -d' ' -f1)
 if [[ -f "$BUILD/dependencies.ready" ]] && [[ $(cat "$BUILD/dependencies.ready") == "$fingerprint" ]]; then exit 0; fi
@@ -33,7 +36,7 @@ cmake_library libzip -DBUILD_TOOLS=OFF -DBUILD_REGRESS=OFF -DBUILD_EXAMPLES=OFF 
 
 (cd "$SOURCES/openssl"
   env CC=emcc CXX=em++ AR=emar RANLIB=emranlib CROSS_COMPILE= \
-    ./Configure linux-generic32 no-shared no-asm no-threads no-dso no-module \
+    ./Configure linux-generic32 no-shared no-asm no-threads no-dso no-module no-engine \
     no-tests no-apps no-ui-console no-sock no-dgram no-async -DNO_FORK \
     --prefix="$PREFIX" --libdir=lib
   emmake make -j"$JOBS" build_sw
@@ -50,10 +53,24 @@ mkdir -p "$BUILD/icu-host" "$BUILD/icu-wasm"
   emconfigure "$SOURCES/icu/source/configure" --host=wasm32-unknown-emscripten \
     --with-cross-build="$BUILD/icu-host" --prefix="$PREFIX" --disable-shared --enable-static \
     --disable-tests --disable-samples --disable-extras --disable-tools \
-    --disable-dyload --disable-plugins --with-data-packaging=static --disable-renaming \
+    --disable-dyload --disable-plugins --with-data-packaging=archive --disable-renaming \
+    icu_cv_host_frag=mh-linux \
     CFLAGS='-O2 -fPIC -DUCONFIG_NO_THREADS=1' CXXFLAGS='-O2 -fPIC -DUCONFIG_NO_THREADS=1'
   emmake make -j"$JOBS"
   emmake make install)
+
+# Convert the whole portable archive into one WASM data object. ICU's native
+# pkgdata default writes host ELF; its -w fallback compiles thousands of tiny
+# objects serially. genccode emits portable C while keeping a single data file.
+icu_version=$(jq -r '.libraries.icu.version' "$ROOT/versions.json")
+icu_major=${icu_version%%.*}
+mkdir -p "$BUILD/icu-embedded"
+"$BUILD/icu-host/bin/genccode" -q -e "icudt$icu_major" -f icudata \
+  -d "$BUILD/icu-embedded" "$PREFIX/share/icu/$icu_version/icudt${icu_major}l.dat"
+emcc -O2 -I"$SOURCES/icu/source/common" -I"$BUILD/icu-wasm/common" \
+  -c "$BUILD/icu-embedded/icudata.c" -o "$BUILD/icu-embedded/icudata.o"
+rm -f "$PREFIX/lib/libicudata.a"
+emar rcs "$PREFIX/lib/libicudata.a" "$BUILD/icu-embedded/icudata.o"
 
 save_license zlib LICENSE README
 save_license openssl LICENSE.txt NOTICE.md

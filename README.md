@@ -109,6 +109,18 @@ returning cookies on subsequent calls. Response headers are pairs so repeated
 `Set-Cookie` values remain intact. Use `/workspace` paths for application files.
 See [`types/index.d.ts`](types/index.d.ts) for the complete public contract.
 
+For a site stored in a subdirectory, pass `documentRoot: '/workspace/site'`
+alongside its script path. Defaults are a 30-second operation timeout, a
+120-second startup timeout, a 64 MiB input limit and a 16 MiB output limit;
+configure them when working with larger archives or slower installations.
+PHP defaults to a 256 MiB memory limit and UTC.
+
+Optional `hostCalls` handlers expose explicit asynchronous operations to PHP's
+`php_wasm_host_call(name, payload)` function. Handlers exchange strings, normally
+JSON. They must not call back into the same PHP instance. While a handler is
+active, new calls to that instance reject with `REENTRANT_CALL`; already queued
+operations remain serialized.
+
 ## Static hosting and releases
 
 The runtime serves as ordinary static JavaScript and WebAssembly, including

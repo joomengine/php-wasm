@@ -23,7 +23,7 @@ async function read(url, limit) {
     if (data.byteLength > limit) fail('ASSET_TOO_LARGE', `Asset exceeds its size limit: ${url}`);
     return new Uint8Array(data);
   }
-  const response = await fetch(url, { credentials: 'omit', redirect: 'error' });
+  const response = await fetch(url, { credentials: 'omit', redirect: 'follow' });
   if (!response.ok) fail('ASSET_FETCH_FAILED', `Asset fetch returned HTTP ${response.status}: ${url}`);
   if (Number(response.headers.get('content-length')) > limit) fail('ASSET_TOO_LARGE', `Asset exceeds its size limit: ${url}`);
   if (!response.body) fail('ASSET_FETCH_FAILED', `Asset response has no body: ${url}`);
@@ -77,7 +77,7 @@ export async function resolveEngine(options) {
     runtimeVersion = string(manifest.runtimeVersion, 'runtimeVersion');
   }
   record(engine, 'engine');
-  if (typeof engine.phpVersion !== 'string' || !/^8\.(3|4|5)\.\d+$/.test(engine.phpVersion)) fail('INVALID_MANIFEST', 'Engine phpVersion must be an exact supported PHP 8.3, 8.4, or 8.5 version');
+  if (typeof engine.phpVersion !== 'string' || !/^\d+\.\d+\.\d+$/.test(engine.phpVersion)) fail('INVALID_MANIFEST', 'Engine phpVersion must be an exact numeric PHP version');
   if (options.phpVersion && engine.phpVersion !== options.phpVersion && !engine.phpVersion.startsWith(`${options.phpVersion}.`)) {
     fail('INVALID_MANIFEST', 'Selected PHP version does not match the engine record');
   }

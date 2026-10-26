@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createPHP } from '../src/index.mjs';
-import { decode, encode, engineOptions, headerValues, installFixtures, phpVersion } from './helpers.mjs';
+import { decode, directEngineOptions, encode, engineOptions, headerValues, installFixtures, phpVersion } from './helpers.mjs';
 
 test(`PHP ${phpVersion}: real WebAssembly runtime`, { timeout: 180_000 }, async t => {
   const php = await createPHP(await engineOptions());
@@ -23,6 +23,19 @@ test(`PHP ${phpVersion}: real WebAssembly runtime`, { timeout: 180_000 }, async 
     for (const extension of ['bcmath', 'ctype', 'date', 'dom', 'exif', 'fileinfo', 'filter', 'gd', 'hash', 'iconv', 'intl', 'json', 'libxml', 'mbstring', 'openssl', 'pcre', 'pdo', 'session', 'simplexml', 'spl', 'tokenizer', 'xml', 'xmlreader', 'xmlwriter', 'zip', 'zlib']) {
       assert.ok(extensions.has(extension), `Missing native extension: ${extension}`);
     }
+  });
+
+  await t.test('repeated CLI invocations do not leak standard stream file descriptors', async () => {
+    await php.fs.writeFile('/workspace/descriptors.php', '<?php $count = 0; for ($fd = 3; $fd < 64; $fd++) { $stream = @fopen("php://fd/" . $fd, "r"); if ($stream !== false) { $count++; fclose($stream); } } echo $count;');
+    await php.run({ script: '/workspace/descriptors.php' });
+    const counts = [];
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const result = await php.run({ script: '/workspace/descriptors.php' });
+      assert.equal(result.exitCode, 0, decode(result.stderr));
+      counts.push(Number(decode(result.stdout)));
+    }
+    assert.ok(Number.isInteger(counts[0]) && counts[0] < 16, `Unexpected number of open file descriptors: ${counts[0]}`);
+    assert.deepEqual(counts, Array(5).fill(counts[0]));
   });
 
   await t.test('HTTP populates PHP input and preserves repeated response headers', async () => {
@@ -52,12 +65,42 @@ test(`PHP ${phpVersion}: real WebAssembly runtime`, { timeout: 180_000 }, async 
     assert.deepEqual(response.body, body);
   });
 
+  await t.test('multipart file uploads populate $_FILES and can be moved into the workspace', async () => {
+    await php.fs.writeFile('/workspace/upload.php', `<?php
+$file = $_FILES['upload'];
+$accepted = is_uploaded_file($file['tmp_name']);
+$moved = move_uploaded_file($file['tmp_name'], '/workspace/uploaded.bin');
+header('Content-Type: application/json');
+echo json_encode(['name' => $file['name'], 'type' => $file['type'], 'size' => $file['size'], 'error' => $file['error'], 'accepted' => $accepted, 'moved' => $moved, 'title' => $_POST['title']], JSON_THROW_ON_ERROR);`);
+    const boundary = 'php-wasm-integration-boundary';
+    const prefix = encode(`--${boundary}\r\nContent-Disposition: form-data; name="title"\r\n\r\nExtension upload\r\n--${boundary}\r\nContent-Disposition: form-data; name="upload"; filename="payload.bin"\r\nContent-Type: application/octet-stream\r\n\r\n`);
+    const bytes = Uint8Array.of(0, 255, 127, 128);
+    const suffix = encode(`\r\n--${boundary}--\r\n`);
+    const body = new Uint8Array(prefix.length + bytes.length + suffix.length);
+    body.set(prefix);
+    body.set(bytes, prefix.length);
+    body.set(suffix, prefix.length + bytes.length);
+    const response = await php.request({ script: '/workspace/upload.php', url: 'http://localhost/upload', method: 'POST', headers: [['content-type', `multipart/form-data; boundary=${boundary}`]], body });
+    assert.equal(response.exitCode, 0, decode(response.stderr));
+    assert.deepEqual(JSON.parse(decode(response.body)), { name: 'payload.bin', type: 'application/octet-stream', size: bytes.length, error: 0, accepted: true, moved: true, title: 'Extension upload' });
+    assert.deepEqual(await php.fs.readFile('/workspace/uploaded.bin'), bytes);
+  });
+
   await t.test('HEAD runs PHP and sends headers with no response body', async () => {
     await php.fs.writeFile('/workspace/head.php', '<?php header("X-Executed: yes"); echo "must be omitted";');
     const response = await php.request({ script: '/workspace/head.php', url: 'http://localhost/head', method: 'HEAD' });
     assert.equal(response.status, 200);
     assert.deepEqual(headerValues(response, 'x-executed'), ['yes']);
     assert.equal(response.body.byteLength, 0);
+  });
+
+  await t.test('nested document roots expose correct CGI script paths', async () => {
+    await php.fs.mkdir('/workspace/site', { recursive: true });
+    await php.fs.writeFile('/workspace/site/index.php', '<?php echo json_encode([$_SERVER["DOCUMENT_ROOT"], $_SERVER["SCRIPT_NAME"], $_SERVER["PHP_SELF"], $_SERVER["SCRIPT_FILENAME"], $_SERVER["REQUEST_URI"]]);');
+    const response = await php.request({ script: '/workspace/site/index.php', documentRoot: '/workspace/site', url: 'http://localhost/article?view=full' });
+    assert.equal(response.exitCode, 0);
+    assert.deepEqual(JSON.parse(decode(response.body)), ['/workspace/site', '/index.php', '/index.php', '/workspace/site/index.php', '/article?view=full']);
+    await assert.rejects(async () => php.request({ script: '/workspace/request.php', documentRoot: '/workspace/site', url: 'http://localhost/' }), error => error.code === 'INVALID_ARGUMENT');
   });
 
   await t.test('request state and CLI state do not leak across invocations', async () => {
@@ -95,6 +138,14 @@ test(`PHP ${phpVersion}: real WebAssembly runtime`, { timeout: 180_000 }, async 
       assert.equal(decode(result.stdout), `out:input${attempt}`);
       assert.equal(decode(result.stderr), 'err');
     }
+  });
+
+  await t.test('large fwrite output preserves every byte and separate stderr', async () => {
+    await php.fs.writeFile('/workspace/large-stream.php', '<?php $pattern = ""; for ($i = 0; $i < 256; $i++) $pattern .= chr($i); fwrite(STDOUT, str_repeat($pattern, 1024)); fwrite(STDERR, "stream stderr\\0done");');
+    const result = await php.run({ script: '/workspace/large-stream.php' });
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(result.stdout, Uint8Array.from({ length: 256 * 1024 }, (_, index) => index % 256));
+    assert.equal(decode(result.stderr), 'stream stderr\0done');
   });
 
   await t.test('sessions survive separate requests when callers return the cookie', async () => {
@@ -162,17 +213,20 @@ if ($zip->open('/workspace/extension-check.zip', ZipArchive::CREATE | ZipArchive
 $zip->addFromString('hello.txt', 'extension payload'); $zip->close();
 $zip->open('/workspace/extension-check.zip'); $zipValue = $zip->getFromName('hello.txt'); $zip->close();
 $image = imagecreatetruecolor(2, 3); $size = [imagesx($image), imagesy($image)];
+ob_start(); imagepng($image); $png = ob_get_clean();
 echo json_encode([
   'dom' => $document->getElementsByTagName('child')[0]->textContent,
   'mbstring' => mb_strtoupper('über', 'UTF-8'),
   'intl' => Normalizer::normalize("e\\u{0301}", Normalizer::FORM_C),
   'zip' => $zipValue, 'zlib' => gzdecode(gzencode('compressed text')),
-  'openssl' => openssl_digest('abc', 'sha256'), 'gd' => $size,
+  'openssl' => openssl_digest('abc', 'sha256'), 'gd' => $size, 'png' => bin2hex(substr($png, 0, 8)),
+  'iconv' => bin2hex(iconv('UTF-8', 'ISO-8859-1', 'é')),
+  'locale' => (new IntlDateFormatter('en_US', IntlDateFormatter::MEDIUM, IntlDateFormatter::NONE, 'UTC'))->format(0),
   'random' => strlen(random_bytes(32)), 'bcmath' => bcadd('99999999999999999999', '1'),
 ], JSON_THROW_ON_ERROR);`);
     const result = await php.run({ script: '/workspace/extensions.php' });
     assert.equal(result.exitCode, 0, decode(result.stderr));
-    assert.deepEqual(JSON.parse(decode(result.stdout)), { dom: 'Joomla', mbstring: 'ÜBER', intl: 'é', zip: 'extension payload', zlib: 'compressed text', openssl: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad', gd: [2, 3], random: 32, bcmath: '100000000000000000000' });
+    assert.deepEqual(JSON.parse(decode(result.stdout)), { dom: 'Joomla', mbstring: 'ÜBER', intl: 'é', zip: 'extension payload', zlib: 'compressed text', openssl: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad', gd: [2, 3], png: '89504e470d0a1a0a', iconv: 'e9', locale: 'Jan 1, 1970', random: 32, bcmath: '100000000000000000000' });
   });
 
   await t.test('filesystem binary operations and serialized concurrent execution', async () => {
@@ -198,10 +252,34 @@ echo json_encode([
     await php.fs.writeFile('/workspace/symlink.php', '<?php symlink("/tmp", "/workspace/escape");');
     assert.equal((await php.run({ script: '/workspace/symlink.php' })).exitCode, 0);
     await assert.rejects(async () => php.fs.writeFile('/workspace/escape/file', 'must not write'), error => error.code === 'PATH_OUTSIDE_WORKSPACE');
+    await php.fs.writeFile('/workspace/nested-links.php', '<?php symlink("/tmp/not-created", "/workspace/dangling"); symlink("/workspace/dangling", "/workspace/chain"); symlink("/workspace/data", "/workspace/safe-alias");');
+    assert.equal((await php.run({ script: '/workspace/nested-links.php' })).exitCode, 0);
+    for (const path of ['/workspace/dangling/file', '/workspace/chain/file']) {
+      await assert.rejects(async () => php.fs.writeFile(path, 'must not write'), error => error.code === 'PATH_OUTSIDE_WORKSPACE', path);
+    }
+    await php.fs.writeFile('/workspace/safe-alias/allowed.txt', 'inside workspace');
+    assert.equal(decode(await php.fs.readFile('/workspace/data/allowed.txt')), 'inside workspace');
   });
 
   await t.test('HTTP header validation rejects newline injection', async () => {
     await assert.rejects(async () => php.request({ script: '/workspace/request.php', url: 'http://localhost/', headers: [['X-Test', 'safe\r\nInjected: value']] }), error => error.code === 'INVALID_ARGUMENT');
+  });
+
+  await t.test('mixed HTTP, CLI and fatal invocations repeatedly reset PHP declarations and globals', async () => {
+    await php.fs.writeFile('/workspace/reset.php', `<?php
+class PerRequestState { public string $value = 'fresh'; }
+function invocationCount(): int { static $count = 0; return ++$count; }
+$allocation = str_repeat('x', 65536);
+echo json_encode([PHP_SAPI, getenv('RUN_INDEX'), invocationCount(), (new PerRequestState())->value, strlen($allocation)], JSON_THROW_ON_ERROR);`);
+    for (let index = 0; index < 15; index++) {
+      const cli = await php.run({ script: '/workspace/reset.php', env: { RUN_INDEX: String(index) } });
+      assert.equal(cli.exitCode, 0, decode(cli.stderr));
+      assert.deepEqual(JSON.parse(decode(cli.stdout)), ['cli', String(index), 1, 'fresh', 65536]);
+      const http = await php.request({ script: '/workspace/reset.php', url: `http://localhost/reset?n=${index}`, env: { RUN_INDEX: String(index) } });
+      assert.equal(http.exitCode, 0, decode(http.stderr));
+      assert.deepEqual(JSON.parse(decode(http.body)), ['cgi-fcgi', String(index), 1, 'fresh', 65536]);
+      assert.notEqual((await php.run({ script: '/workspace/fatal.php', ini: { display_errors: 'stderr' } })).exitCode, 0);
+    }
   });
 });
 
@@ -213,9 +291,13 @@ test('PHP can await asynchronous host bridge calls without blocking or deadlocki
       return JSON.stringify({ result: JSON.parse(payload).value * 2 });
     },
     reentry: async () => {
+      const codes = [];
       try { await php.fs.readFile('/workspace/bridge.php'); }
-      catch (error) { return JSON.stringify({ code: error.code }); }
-      throw new Error('Runtime allowed a deadlocking reentrant host call');
+      catch (error) { codes.push(error.code); }
+      try { await php.close(); }
+      catch (error) { codes.push(error.code); }
+      if (codes.length !== 2) throw new Error('Runtime allowed a deadlocking reentrant host call');
+      return JSON.stringify({ codes });
     },
     rejected: async () => { throw new Error('expected host failure'); },
   } });
@@ -225,19 +307,66 @@ $double = json_decode(php_wasm_host_call('double', json_encode(['value' => 21]))
 $reentry = json_decode(php_wasm_host_call('reentry', '{}'), true, 512, JSON_THROW_ON_ERROR);
 try { php_wasm_host_call('rejected', '{}'); }
 catch (Throwable $error) { $failure = $error->getMessage(); }
-echo json_encode([$double, $reentry, $failure], JSON_THROW_ON_ERROR);`);
+$fiber = new Fiber(function () {
+  $first = json_decode(php_wasm_host_call('double', '{"value":10}'), true, 512, JSON_THROW_ON_ERROR);
+  $resumed = Fiber::suspend($first['result']);
+  return json_decode(php_wasm_host_call('double', json_encode(['value' => $resumed])), true, 512, JSON_THROW_ON_ERROR)['result'];
+});
+$suspended = $fiber->start();
+$fiber->resume(21);
+echo json_encode([$double, $reentry, $failure, [$suspended, $fiber->getReturn()]], JSON_THROW_ON_ERROR);`);
     const result = await php.run({ script: '/workspace/bridge.php' });
     assert.equal(result.exitCode, 0, decode(result.stderr));
-    assert.deepEqual(JSON.parse(decode(result.stdout)), [{ result: 42 }, { code: 'REENTRANT_CALL' }, 'expected host failure']);
+    assert.deepEqual(JSON.parse(decode(result.stdout)), [{ result: 42 }, { codes: ['REENTRANT_CALL', 'REENTRANT_CALL'] }, 'expected host failure', [20, 42]]);
     const repeated = await php.run({ script: '/workspace/bridge.php' });
     assert.equal(repeated.exitCode, 0, decode(repeated.stderr));
   } finally { await php.close(); }
 });
 
 test('asset integrity mismatch fails before PHP executes', { timeout: 60_000 }, async () => {
-  const options = await engineOptions(undefined, { manifest: false });
+  const options = await directEngineOptions();
   options.engine.wasm.sha256 = '0'.repeat(64);
   await assert.rejects(createPHP(options), error => error.code === 'INTEGRITY_MISMATCH');
+});
+
+test('closing PHP standard streams does not break the next CLI invocation', { timeout: 60_000 }, async () => {
+  const php = await createPHP(await engineOptions());
+  try {
+    await php.fs.writeFile('/workspace/close-streams.php', '<?php fclose(STDIN); fclose(STDOUT); fclose(STDERR);');
+    assert.equal((await php.run({ script: '/workspace/close-streams.php' })).exitCode, 0);
+    await php.fs.writeFile('/workspace/streams.php', '<?php fwrite(STDOUT, stream_get_contents(STDIN)); fwrite(STDERR, "still open");');
+    const result = await php.run({ script: '/workspace/streams.php', stdin: encode('new input') });
+    assert.equal(result.exitCode, 0);
+    assert.equal(decode(result.stdout), 'new input');
+    assert.equal(decode(result.stderr), 'still open');
+  } finally { await php.close(); }
+});
+
+test('close drains accepted work, rejects new work and releases the worker', { timeout: 60_000 }, async () => {
+  const php = await createPHP(await engineOptions());
+  try {
+    await php.fs.writeFile('/workspace/count.txt', '0');
+    await php.fs.writeFile('/workspace/count.php', '<?php $value = (int)file_get_contents("/workspace/count.txt") + 1; file_put_contents("/workspace/count.txt", (string)$value); echo $value;');
+    const accepted = Array.from({ length: 5 }, () => php.run({ script: '/workspace/count.php' }));
+    const closing = php.close();
+    await assert.rejects(async () => php.run({ script: '/workspace/count.php' }), error => error.code === 'CLOSED');
+    await assert.rejects(async () => php.fs.readFile('/workspace/count.txt'), error => error.code === 'CLOSED');
+    assert.deepEqual((await Promise.all(accepted)).map(result => Number(decode(result.stdout))), [1, 2, 3, 4, 5]);
+    await closing;
+    await php.close();
+  } finally { await php.close(); }
+});
+
+test('request and queue limits reject excess work without poisoning the runtime', { timeout: 60_000 }, async () => {
+  const php = await createPHP({ ...await engineOptions(), maxRequestBytes: 4096, maxQueuedRequests: 1 });
+  try {
+    await assert.rejects(async () => php.fs.writeFile('/workspace/large.bin', new Uint8Array(8192)), error => error.code === 'REQUEST_LIMIT');
+    await php.fs.writeFile('/workspace/ok.php', '<?php echo "ok";');
+    const accepted = php.run({ script: '/workspace/ok.php' });
+    await assert.rejects(async () => php.run({ script: '/workspace/ok.php' }), error => error.code === 'QUEUE_LIMIT');
+    assert.equal(decode((await accepted).stdout), 'ok');
+    assert.equal(decode((await php.run({ script: '/workspace/ok.php' })).stdout), 'ok');
+  } finally { await php.close(); }
 });
 
 test('unbounded PHP output is stopped and the worker cannot be reused', { timeout: 60_000 }, async () => {

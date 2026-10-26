@@ -9,6 +9,11 @@ emcc --version | head -1 | grep -F " $sdk_version " >/dev/null || {
 }
 BUILD=${BUILD:-"$ROOT/.build"}
 export BUILD
+mkdir -p "$BUILD"
+# Native libraries, sources, and prefix are shared by local minor builds.
+# GitHub's matrix uses separate workspaces and therefore still runs in parallel.
+exec 8>"$BUILD/build.lock"
+flock 8
 source "$ROOT/build/common.sh"
 bash "$ROOT/build/dependencies.sh"
 source_dir="$SOURCES/php-$minor"
@@ -43,7 +48,7 @@ mkdir -p "$output/licenses"
     -sENVIRONMENT=web,worker,node -sALLOW_MEMORY_GROWTH=1 \
     -sINITIAL_MEMORY=134217728 -sMAXIMUM_MEMORY=2147483648 -sSTACK_SIZE=16777216 \
     -sASYNCIFY=1 -sASYNCIFY_STACK_SIZE=131072 -sFORCE_FILESYSTEM=1 -sEXIT_RUNTIME=0 \
-    -sINVOKE_RUN=0 -sASSERTIONS=1 -sWASM_BIGINT=1 \
+    -sINVOKE_RUN=0 -sASSERTIONS=1 -sWASM_BIGINT=1 -sDYNAMIC_EXECUTION=0 \
     '-sEXPORTED_FUNCTIONS=["_php_wasm_run","_php_wasm_abi_version","_php_wasm_version","_php_wasm_add_server_variable","_php_wasm_setenv","_malloc","_free"]' \
     '-sEXPORTED_RUNTIME_METHODS=["FS","IDBFS","ENV","ccall","cwrap","UTF8ToString","stringToUTF8","lengthBytesUTF8","HEAPU8"]' \
     -lidbfs.js -o "$output/php.mjs"
@@ -53,4 +58,10 @@ mkdir -p "$output/licenses/php"
 cp "$source_dir/LICENSE" "$output/licenses/php/"
 cp "$ROOT/LICENSE" "$output/licenses/Apache-2.0.txt"
 cp "$ROOT/patches/NOTICE" "$output/licenses/patches-NOTICE.txt"
+emscripten_root=$(dirname "$(command -v emcc)")
+mkdir -p "$output/licenses/emscripten"
+cp "$emscripten_root/LICENSE" "$output/licenses/emscripten/LICENSE"
+cp "$emscripten_root/system/lib/libc/musl/COPYRIGHT" "$output/licenses/emscripten/musl-COPYRIGHT"
+cp "$emscripten_root/system/lib/libcxx/LICENSE.TXT" "$output/licenses/emscripten/libcxx-LICENSE.TXT"
+cp "$emscripten_root/system/lib/compiler-rt/LICENSE.TXT" "$output/licenses/emscripten/compiler-rt-LICENSE.TXT"
 printf 'Built PHP %s: %s\n' "$(jq -r ".php[\"$minor\"].version" "$ROOT/versions.json")" "$output"

@@ -97,3 +97,16 @@ The database boundary requires a compiled PHP driver; a JavaScript callback or
 PDO base class alone is not a working MySQL driver. Do not promise drop-in
 Joomla database compatibility until the separate bridge passes its integration
 tests against Joomla 5 and 6 and the chosen extension packages.
+
+The intended native-driver integration is **static compilation**. The bridge
+repository will release its PHP driver source alongside its JavaScript database
+assets and define a versioned database protocol. This repository will pin that
+source release, compile the driver for each supported PHP version, and record
+the tested driver/protocol versions with its engine assets. The playground will
+then select a tested engine/database pair. Native PHP `.so` loading is not part
+of this runtime; avoiding it removes a second dynamic-linking ABI matrix.
+
+The existing `php_wasm_host_call()` function is an asynchronous string transport
+with explicit registered host handlers. It is not a PDO or mysqli implementation.
+A PDO MySQL driver will cover Joomla's PDO database path; extensions that use
+mysqli directly will need separately tested mysqli compatibility.

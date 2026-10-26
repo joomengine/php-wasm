@@ -33,11 +33,11 @@ interface CommonOptions {
   startupTimeoutMs?: number;
   /** Combined output, diagnostics and response headers limit. Default: 16 MiB. */
   maxOutputBytes?: number;
-  /** Request input and filesystem write limit. Default: 16 MiB. */
+  /** Request input and filesystem write limit. Default: 64 MiB. */
   maxRequestBytes?: number;
   /** Maximum queued/active operation count. Default: 64. */
   maxQueuedRequests?: number;
-  /** Maximum queued/active input bytes. Default: 64 MiB. */
+  /** Maximum queued/active input bytes. Default: 128 MiB. */
   maxQueuedBytes?: number;
   /** Browser-only IndexedDB persistence, with an exclusive Web Lock per key. */
   persistence?: { key: string };
@@ -73,6 +73,8 @@ export interface RunOptions extends ExecutionOptions {
 }
 
 export interface RequestOptions extends ExecutionOptions {
+  /** Virtual document root containing script. Sets DOCUMENT_ROOT and the script URL path. Default: /workspace. */
+  documentRoot?: string;
   /** Absolute HTTP(S) URL used to populate PHP request globals. No network fetch is performed. */
   url: string;
   method?: string;

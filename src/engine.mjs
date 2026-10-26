@@ -77,13 +77,14 @@ function httpInput(input) {
     const previous = values.get(name);
     values.set(name, previous === undefined ? value : `${previous}${name === 'cookie' ? '; ' : ', '}${value}`);
   }
+  const scriptName = input.script.slice(input.documentRoot.length);
   const server = {
     SERVER_SOFTWARE: 'Joomengine PHP WASM', SERVER_PROTOCOL: 'HTTP/1.1',
     SERVER_NAME: url.hostname, SERVER_PORT: url.port || (url.protocol === 'https:' ? '443' : '80'),
     REQUEST_METHOD: input.method, REQUEST_URI: `${url.pathname}${url.search}`,
     QUERY_STRING: url.search.slice(1), REQUEST_SCHEME: url.protocol.slice(0, -1),
-    SCRIPT_FILENAME: input.script, SCRIPT_NAME: input.script.slice('/workspace'.length),
-    PHP_SELF: input.script.slice('/workspace'.length), DOCUMENT_ROOT: '/workspace',
+    SCRIPT_FILENAME: input.script, SCRIPT_NAME: scriptName,
+    PHP_SELF: scriptName, DOCUMENT_ROOT: input.documentRoot,
     HTTP_HOST: url.host, HTTPS: url.protocol === 'https:' ? 'on' : '',
     REMOTE_ADDR: '127.0.0.1', REMOTE_PORT: '0',
     CONTENT_LENGTH: String(input.body.byteLength),
@@ -134,7 +135,7 @@ export class Engine {
     if (module.ccall('php_wasm_abi_version', 'number', [], []) !== 1) fail('ENGINE_ABI_MISMATCH', 'Native engine ABI must equal 1');
     const actualVersion = module.ccall('php_wasm_version', 'string', [], []);
     if (actualVersion !== resolved.phpVersion) fail('ENGINE_ABI_MISMATCH', `Native PHP ${actualVersion} does not match manifest PHP ${resolved.phpVersion}`);
-    this.baseEnvironment = { ...module.ENV };
+    this.baseEnvironment = { PATH: '/usr/bin:/bin', HOME: '/workspace', TMPDIR: '/tmp', TZ: 'UTC', ...module.ENV };
     module.phpWasm = {
       request: {},
       onStdout: (value) => this.output?.append('stdout', value),
@@ -144,6 +145,7 @@ export class Engine {
     };
     this.filesystem = new RuntimeFilesystem(module, this.options.maxOutputBytes);
     await this.filesystem.initialize(this.options.persistence);
+    this.filesystem.operation('mkdir', { path: '/workspace/.php-wasm/sessions', recursive: true });
     return { phpVersion: actualVersion, runtimeVersion: resolved.runtimeVersion };
   }
 
@@ -152,6 +154,7 @@ export class Engine {
     const module = this.module;
     this.filesystem.check(input.script);
     this.filesystem.check(input.cwd);
+    if (input.documentRoot) this.filesystem.check(input.documentRoot);
     const allocations = [];
     this.output = new Output(this.options.maxOutputBytes);
     this.stdin = mode === 'run' ? input.stdin : new Uint8Array();
@@ -167,12 +170,16 @@ export class Engine {
     let enteredNative = false;
     try {
       for (const key of Object.keys(module.ENV)) delete module.ENV[key];
-      Object.assign(module.ENV, this.baseEnvironment, input.env, { PWD: input.cwd });
+      const environment = { ...this.baseEnvironment, ...input.env, PWD: input.cwd };
+      for (const [key, value] of Object.entries(environment)) {
+        Object.defineProperty(module.ENV, key, { value, writable: true, configurable: true, enumerable: true });
+      }
       module.FS.chdir(input.cwd);
       module.phpWasm.request = mode === 'run'
         ? { method: 'GET', uri: input.script, query: '', contentType: '', cookie: '', body: new Uint8Array(), stdin: input.stdin, server: {}, ini: input.ini }
         : httpInput(input);
       module.phpWasm.request.env = { ...module.ENV };
+      module.phpWasm.request.ini = 'memory_limit=256M\ndate.timezone=UTC\nlog_errors=1\ndisplay_errors=0\nsession.save_path="/workspace/.php-wasm/sessions"\n' + input.ini;
       const argv = mode === 'run' ? [input.script, ...input.args] : [];
       const pointers = argv.map((arg) => {
         const size = module.lengthBytesUTF8(arg) + 1;
@@ -213,6 +220,6 @@ export class Engine {
 
   async close() {
     try { await this.filesystem?.sync(); }
-    finally { this.filesystem?.release(); }
+    finally { await this.filesystem?.release(); }
   }
 }

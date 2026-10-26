@@ -3,7 +3,7 @@ import { fail } from './errors.mjs';
 const encoder = new TextEncoder();
 export const DEFAULT_TIMEOUT_MS = 30_000;
 export const DEFAULT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
-export const DEFAULT_MAX_REQUEST_BYTES = 16 * 1024 * 1024;
+export const DEFAULT_MAX_REQUEST_BYTES = 64 * 1024 * 1024;
 
 export function record(value, name) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) fail('INVALID_ARGUMENT', `${name} must be an object`);
@@ -25,6 +25,7 @@ export function integer(value, name, fallback, maximum = 2_147_483_647) {
 
 export function workspacePath(value, name = 'path') {
   string(value, name);
+  if (encoder.encode(value).byteLength > 4095) fail('INVALID_ARGUMENT', `${name} exceeds the 4095-byte filesystem path limit`);
   if (value.includes('\\') || value.split('/').includes('..') || !value.startsWith('/')) {
     fail('INVALID_ARGUMENT', `${name} must be an absolute path inside /workspace without parent traversal`);
   }
@@ -41,7 +42,7 @@ export function bytes(value, name, { text = false } = {}) {
 
 export function environment(value = {}) {
   record(value, 'env');
-  const result = {};
+  const result = Object.create(null);
   for (const [key, val] of Object.entries(value)) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) fail('INVALID_ARGUMENT', `Invalid environment variable name: ${key}`);
     result[key] = string(val, `env.${key}`, { empty: true });
@@ -91,8 +92,11 @@ export function requestOptions(input) {
     if (!/^[!#$%&'*+.^_`|~0-9a-z-]+$/.test(name) || /[\r\n]/.test(value)) fail('INVALID_ARGUMENT', 'Invalid HTTP header');
     return [name, value];
   });
+  const script = workspacePath(input.script, 'script');
+  const documentRoot = workspacePath(input.documentRoot ?? '/workspace', 'documentRoot');
+  if (!script.startsWith(`${documentRoot}/`)) fail('INVALID_ARGUMENT', 'script must be a file inside documentRoot');
   return {
-    script: workspacePath(input.script, 'script'), url: url.href, method, headers: normalized,
+    script, documentRoot, url: url.href, method, headers: normalized,
     cwd: workspacePath(input.cwd ?? '/workspace', 'cwd'),
     body: input.body === undefined ? new Uint8Array() : bytes(input.body, 'body'),
     env: environment(input.env), ini: iniText(input.ini),

@@ -28,6 +28,7 @@ export class RuntimeFilesystem {
       await held;
     });
     lock.catch(acquiredReject);
+    this.lockCompletion = lock;
     await acquired;
     // IDBFS names its database after its mountpoint: each key needs a distinct mountpoint.
     this.root = `/instances/${persistence.key}`;
@@ -48,20 +49,30 @@ export class RuntimeFilesystem {
 
   check(path) {
     path = workspacePath(path);
-    let prefix = '';
-    for (const part of path.split('/').filter(Boolean)) {
-      prefix += `/${part}`;
-      try {
-        const resolved = this.FS.lookupPath(prefix, { follow: true }).path;
-        if (resolved !== this.root && !resolved.startsWith(`${this.root}/`)) {
-          fail('PATH_OUTSIDE_WORKSPACE', `Symlink resolves outside the workspace: ${path}`);
+    const inside = (candidate, root) => candidate === root || candidate.startsWith(`${root}/`);
+    const resolve = (candidate, depth = 0) => {
+      if (depth > 40) fail('FILESYSTEM_ERROR', 'Too many symbolic links');
+      const base = inside(candidate, this.root) ? this.root : inside(candidate, '/workspace') ? '/workspace' : null;
+      if (!base) fail('PATH_OUTSIDE_WORKSPACE', `Symlink resolves outside the workspace: ${path}`);
+      const remaining = candidate.slice(base.length).split('/').filter(Boolean);
+      let prefix = base;
+      for (let index = -1; index < remaining.length; index++) {
+        if (index >= 0) prefix += `/${remaining[index]}`;
+        let node;
+        try { node = this.FS.lookupPath(prefix, { follow: false }).node; }
+        catch (error) {
+          if (error.errno === 44) return; // A missing target is safe only after all links were checked.
+          throw error;
         }
-      } catch (error) {
-        if (error.code === 'PATH_OUTSIDE_WORKSPACE') throw error;
-        if (error.errno === 44) break;
-        throw error;
+        if (this.FS.isLink(node.mode)) {
+          const target = this.FS.readlink(prefix);
+          const suffix = remaining.slice(index + 1).join('/');
+          resolve(suffix ? `${target}/${suffix}` : target, depth + 1);
+          return;
+        }
       }
-    }
+    };
+    resolve(path);
     return path;
   }
 
@@ -69,7 +80,7 @@ export class RuntimeFilesystem {
     try {
       const path = this.check(args.path);
       switch (name) {
-        case 'writeFile': this.FS.writeFile(path, args.data); return;
+        case 'writeFile': this.FS.writeFile(path, args.data, { canOwn: true }); return;
         case 'readFile': {
           const stat = this.FS.stat(path);
           if (!this.FS.isFile(stat.mode)) fail('FILESYSTEM_ERROR', 'readFile requires a regular file');
@@ -97,5 +108,9 @@ export class RuntimeFilesystem {
     }
   }
 
-  release() { this.releaseLock?.(); this.releaseLock = null; }
+  async release() {
+    this.releaseLock?.();
+    this.releaseLock = null;
+    await this.lockCompletion;
+  }
 }

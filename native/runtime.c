@@ -2,6 +2,9 @@
  * A browser host SAPI. Each invocation has its own PHP process lifecycle;
  * Emscripten's filesystem and the host bridge remain attached to the module.
  */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE 1
+#endif
 #include <emscripten.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,8 +24,12 @@ static int running;
 EMSCRIPTEN_KEEPALIVE int php_wasm_abi_version(void) { return 1; }
 EMSCRIPTEN_KEEPALIVE const char *php_wasm_version(void) { return PHP_VERSION; }
 
+/* PHP's php://fd wrapper needs this legacy POSIX function, which Emscripten
+ * declares but does not include in libc. FS accepts 0..MAX_OPEN_FDS inclusive. */
+EM_JS(int, getdtablesize, (), { return FS.MAX_OPEN_FDS + 1; });
+
 EM_JS(char *, host_string, (const char *key), {
-    const value = Module.phpWasm.request[UTF8ToString(key)] ?? '';
+    const value = Module.phpWasm.request[UTF8ToString(key)] ?? "";
     const size = lengthBytesUTF8(String(value)) + 1;
     const result = _malloc(size);
     if (!result) return 0;
@@ -187,8 +194,13 @@ static void register_cli_streams(void)
     for (int i = 0; i < 3; i++) {
         php_stream *stream = php_stream_open_wrapper(paths[i], i ? "wb" : "rb", 0, NULL);
         if (!stream) continue;
-        /* PHP request resources must not close the host's process-wide FDs. */
-        stream->flags |= PHP_STREAM_FLAG_NO_RSCR_DTOR_CLOSE;
+        /* The first CLI stream wraps libc's original descriptor; later opens
+         * duplicate it. Keep only the originals alive and let duplicate FDs
+         * close normally, including when a script explicitly calls fclose(). */
+        int descriptor = -1;
+        if (php_stream_cast(stream, PHP_STREAM_AS_FD, (void *) &descriptor, 0) == SUCCESS && descriptor == i) {
+            stream->flags |= PHP_STREAM_FLAG_NO_CLOSE;
+        }
         zend_constant constant;
         php_stream_to_zval(stream, &constant.value);
         constant.name = zend_string_init(names[i], strlen(names[i]), 0);
@@ -205,6 +217,13 @@ EMSCRIPTEN_KEEPALIVE int php_wasm_run(const char *script, int cli, int argc, cha
     /* Emscripten's JavaScript ENV map is cached by libc on initialization. */
     clearenv();
     if (!host_environment()) { running = 0; return 70; }
+    /* Zend's normal allocator splits mmap regions, which the browser heap
+     * cannot unmap. PHP's tracked system allocator retains request cleanup
+     * and memory-limit accounting while using Emscripten malloc/free. */
+    if (setenv("USE_ZEND_ALLOC", "0", 1) || setenv("USE_TRACKED_ALLOC", "1", 1)) {
+        running = 0;
+        return 70;
+    }
     volatile int exit_status = 1, request_started = 0;
     int module_started = 0;
     char *method = host_string("method"), *uri = host_string("uri");

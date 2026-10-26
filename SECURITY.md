@@ -16,6 +16,11 @@ responsiveness and terminating execution, but it is not a separate browser
 origin. Application scripts within one PHP instance share its virtual files.
 The runtime is not a multi-tenant server isolation system.
 
+In Node.js, `worker_threads` is not an operating-system sandbox. A trusted engine
+module executes with the Node process's permissions; the PHP filesystem API is
+virtualized, but arbitrary JavaScript modules are not made safe by a worker.
+Load only engine manifests and modules you trust.
+
 The release manifest must come from a trusted source. Its hashes detect damaged
 or substituted assets only while the manifest itself remains trusted. Deploy
 over HTTPS and restrict executable asset origins using the host's CSP. The

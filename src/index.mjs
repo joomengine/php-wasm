@@ -21,7 +21,7 @@ function optionsForWorker(input) {
     maxOutputBytes: integer(input.maxOutputBytes, 'maxOutputBytes', DEFAULT_MAX_OUTPUT_BYTES),
     maxRequestBytes: integer(input.maxRequestBytes, 'maxRequestBytes', DEFAULT_MAX_REQUEST_BYTES),
     maxQueuedRequests: integer(input.maxQueuedRequests, 'maxQueuedRequests', 64, 1024),
-    maxQueuedBytes: integer(input.maxQueuedBytes, 'maxQueuedBytes', 64 * 1024 * 1024),
+    maxQueuedBytes: integer(input.maxQueuedBytes, 'maxQueuedBytes', 128 * 1024 * 1024),
   };
   if (input.manifestUrl !== undefined) {
     options.manifestUrl = absoluteURL(input.manifestUrl, 'manifestUrl');
@@ -61,9 +61,12 @@ class PHPRuntime {
     this.#worker = worker;
     this.#options = options;
     this.#hostCalls = hostCalls;
-    const receive = (message) => { void this.#receive(message); };
+    const receive = (message) => {
+      this.#receive(message).catch((error) => this.#kill(new PHPWasmError('WORKER_FAILED', error.message, { cause: error })));
+    };
     if (typeof worker.on === 'function') {
       worker.on('message', receive);
+      worker.on('messageerror', () => this.#kill(new PHPWasmError('WORKER_FAILED', 'PHP worker returned an unreadable message')));
       worker.on('error', (error) => this.#kill(new PHPWasmError('WORKER_FAILED', error.message, { cause: error })));
       worker.on('exit', (code) => {
         if (this.#state !== 'closed') this.#kill(new PHPWasmError('WORKER_FAILED', `PHP worker exited unexpectedly (${code})`));
@@ -73,7 +76,7 @@ class PHPRuntime {
       worker.addEventListener('error', (event) => this.#kill(new PHPWasmError('WORKER_FAILED', event.message || 'PHP worker failed')));
       worker.addEventListener('messageerror', () => this.#kill(new PHPWasmError('WORKER_FAILED', 'PHP worker returned an unreadable message')));
     }
-    this.fs = Object.freeze({
+    Object.defineProperty(this, 'fs', { enumerable: true, value: Object.freeze({
       writeFile: async (path, data) => this.#enqueue('fs', { name: 'writeFile', path: workspacePath(path), data: bytes(data, 'data', { text: true }) }),
       readFile: async (path) => this.#enqueue('fs', { name: 'readFile', path: workspacePath(path) }),
       mkdir: async (path, options = {}) => {
@@ -84,7 +87,7 @@ class PHPRuntime {
       readdir: async (path) => this.#enqueue('fs', { name: 'readdir', path: workspacePath(path) }),
       stat: async (path) => this.#enqueue('fs', { name: 'stat', path: workspacePath(path) }),
       unlink: async (path) => this.#enqueue('fs', { name: 'unlink', path: workspacePath(path) }),
-    });
+    }) });
   }
 
   get state() { return this.#state; }
@@ -141,7 +144,11 @@ class PHPRuntime {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => this.#kill(new PHPWasmError('TIMEOUT', `PHP ${operation} exceeded ${timeout} ms; the runtime has been terminated`)), timeout);
       this.#pending = { id, resolve, reject, timer };
-      try { this.#worker.postMessage({ type: 'call', id, operation, args }); }
+      try {
+        const binary = args.data ?? args.stdin ?? args.body;
+        const transfers = binary instanceof Uint8Array ? [binary.buffer] : [];
+        this.#worker.postMessage({ type: 'call', id, operation, args }, transfers);
+      }
       catch (error) { this.#kill(new PHPWasmError('WORKER_FAILED', error.message, { cause: error })); }
     });
   }
