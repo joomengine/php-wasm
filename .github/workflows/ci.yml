@@ -29,6 +29,8 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run check
+      - name: Test verified source downloads and recovery
+        run: npm run test:build
       - id: catalog
         run: echo "php=$(node scripts/catalog.mjs matrix)" >> "$GITHUB_OUTPUT"
 

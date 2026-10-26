@@ -15,7 +15,8 @@
     "check": "node scripts/check.mjs",
     "build": "bash build/build.sh",
     "manifest": "node scripts/manifest.mjs",
-    "test": "npm run check && npm run test:integration && npm run test:browser",
+    "test": "npm run check && npm run test:build && npm run test:integration && npm run test:browser",
+    "test:build": "node --test test/source-downloads.test.mjs",
     "test:integration": "node --test test/runtime.test.mjs",
     "test:browser": "node --test test/browser.test.mjs",
     "release:package": "node scripts/package-release.mjs"
