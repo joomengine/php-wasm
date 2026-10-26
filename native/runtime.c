@@ -8,6 +8,8 @@
 #include <emscripten.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
+#include <sys/types.h>
 #include "php.h"
 #include "php_main.h"
 #include "php_variables.h"
@@ -21,6 +23,7 @@ static size_t body_offset;
 static zval *server_variables;
 static int running;
 static int completed_exit_code = -1;
+static int cli_request;
 
 EMSCRIPTEN_KEEPALIVE int php_wasm_abi_version(void) { return 1; }
 EMSCRIPTEN_KEEPALIVE const char *php_wasm_version(void) { return PHP_VERSION; }
@@ -31,6 +34,15 @@ EMSCRIPTEN_KEEPALIVE int php_wasm_exit_code(void) { return running ? -1 : comple
 /* PHP's php://fd wrapper needs this legacy POSIX function, which Emscripten
  * declares but does not include in libc. FS accepts 0..MAX_OPEN_FDS inclusive. */
 EM_JS(int, getdtablesize, (), { return FS.MAX_OPEN_FDS + 1; });
+
+/* PHP 8.5 links its core OPcache preloader even when caching is disabled.
+ * Browser processes cannot change user/group privileges. */
+int initgroups(const char *user, gid_t group)
+{
+    (void) user; (void) group;
+    errno = ENOSYS;
+    return -1;
+}
 
 EM_JS(char *, host_string, (const char *key), {
     const value = Module.phpWasm.request[UTF8ToString(key)] ?? "";
@@ -166,8 +178,16 @@ static void register_variables(zval *variables)
     host_server_variables();
     server_variables = NULL;
 }
+static int handle_header(sapi_header_struct *header, sapi_header_op_enum operation, sapi_headers_struct *headers)
+{
+    (void) header; (void) operation; (void) headers;
+    /* Match PHP CLI: HTTP headers are ignored without marking them sent
+     * before execution. Sessions may therefore initialize before output. */
+    return cli_request ? 0 : SAPI_HEADER_ADD;
+}
 static int send_headers(sapi_headers_struct *headers)
 {
+    if (cli_request) return SAPI_HEADER_SENT_SUCCESSFULLY;
     zend_llist_position position;
     sapi_header_struct *header;
     host_headers_begin(headers->http_response_code);
@@ -188,7 +208,8 @@ static sapi_module_struct wasm_sapi = {
     .name = "cgi-fcgi", .pretty_name = "JoomEngine WebAssembly",
     .startup = startup, .shutdown = php_module_shutdown_wrapper,
     .ub_write = write_output, .flush = flush_output, .sapi_error = php_error,
-    .send_headers = send_headers, .read_post = read_post, .read_cookies = read_cookies,
+    .header_handler = handle_header, .send_headers = send_headers,
+    .read_post = read_post, .read_cookies = read_cookies,
     .register_server_variables = register_variables, .log_message = log_message
 };
 
@@ -219,6 +240,7 @@ EMSCRIPTEN_KEEPALIVE int php_wasm_run(const char *script, int cli, int argc, cha
 {
     if (running) return 70;
     running = 1; body_offset = 0;
+    cli_request = cli != 0;
     completed_exit_code = -1;
     /* Emscripten's JavaScript ENV map is cached by libc on initialization. */
     clearenv();
@@ -267,7 +289,7 @@ EMSCRIPTEN_KEEPALIVE int php_wasm_run(const char *script, int cli, int argc, cha
     SG(request_info).argc = argc;
     SG(request_info).argv = argv;
     SG(request_info).proto_num = 1001;
-    SG(request_info).no_headers = cli;
+    SG(request_info).no_headers = 0;
     SG(request_info).headers_only = !cli && strcmp(method, "HEAD") == 0;
     SG(sapi_headers).http_response_code = 200;
 
@@ -276,8 +298,6 @@ EMSCRIPTEN_KEEPALIVE int php_wasm_run(const char *script, int cli, int argc, cha
         if (php_request_startup() == SUCCESS) {
             request_started = 1;
             if (cli) {
-                SG(headers_sent) = 1;
-                SG(request_info).no_headers = 1;
                 register_cli_streams();
             }
             zend_file_handle file;

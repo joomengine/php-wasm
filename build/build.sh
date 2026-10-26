@@ -21,10 +21,16 @@ printf '{"type":"commonjs"}\n' > "$BUILD/package.json"
 source "$ROOT/build/common.sh"
 bash "$ROOT/build/dependencies.sh"
 source_dir="$SOURCES/php-$minor"
+fiber_patch="$ROOT/patches/php-$minor-fibers.patch"
+fiber_fingerprint=$(sha256sum "$fiber_patch" | cut -d' ' -f1)
+if [[ -f "$source_dir/.fibers-patched" ]] && [[ $(cat "$source_dir/.fibers-patched") != "$fiber_fingerprint" ]]; then
+  # Restore the pinned upstream tree before applying a changed patch.
+  rm -f "$source_dir/.source-ready"
+fi
 fetch_source ".php[\"$minor\"]" "$source_dir"
 if [[ ! -f "$source_dir/.fibers-patched" ]]; then
-  patch -d "$source_dir" -p1 < "$ROOT/patches/php-$minor-fibers.patch"
-  touch "$source_dir/.fibers-patched"
+  patch -d "$source_dir" -p1 --fuzz=0 < "$fiber_patch"
+  printf '%s\n' "$fiber_fingerprint" > "$source_dir/.fibers-patched"
 fi
 output="$ROOT/dist/php/$minor"
 mkdir -p "$output/licenses"
@@ -39,7 +45,7 @@ mkdir -p "$output/licenses"
     --with-config-file-path=/config --with-config-file-scan-dir=/config/conf.d \
     --enable-bcmath --enable-calendar --enable-ctype --enable-exif --enable-fileinfo \
     --enable-filter --enable-mbstring --enable-pdo --enable-phar --enable-session --enable-tokenizer \
-    --with-iconv --with-openssl --with-zlib --with-zip --enable-intl --enable-gd \
+    --with-iconv --with-openssl --with-zlib --with-zip --enable-intl --enable-gd --with-jpeg \
     --with-libxml --enable-dom --enable-simplexml --enable-xml --enable-xmlreader --enable-xmlwriter \
     ac_cv_func_fork=no ac_cv_func_vfork=no ac_cv_func_posix_spawn=no \
     php_cv_iconv_errno=yes php_cv_iconv_ignore=no
@@ -47,8 +53,8 @@ mkdir -p "$output/licenses"
   includes=(-I. -I./main -I./Zend -I./TSRM -I./ext -I./ext/date/lib -I"$PREFIX/include")
   emcc -O2 "${includes[@]}" -c "$ROOT/native/runtime.c" -o "$BUILD/runtime-$minor.o"
   em++ -O2 "$BUILD/runtime-$minor.o" .libs/libphp.a \
-    -L"$PREFIX/lib" -lzip -lpng16 -lxml2 -lonig -lssl -lcrypto -lz \
-    -licui18n -licuuc -licudata -lm \
+    -L"$PREFIX/lib" -lzip -lpng16 -ljpeg -lxml2 -lonig -lssl -lcrypto -lz \
+    -licuio -licui18n -licuuc -licudata -lm \
     --no-entry -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createPHP \
     -sENVIRONMENT=web,worker,node -sALLOW_MEMORY_GROWTH=1 \
     -sINITIAL_MEMORY=134217728 -sMAXIMUM_MEMORY=2147483648 -sSTACK_SIZE=16777216 \

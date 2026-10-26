@@ -10,13 +10,19 @@ for (const browserName of browsers) {
   test(`${browserName}: PHP ${phpVersion} in a real browser worker`, { timeout: 240_000 }, async t => {
     assert.ok(['chromium', 'firefox', 'webkit'].includes(browserName), `Unknown browser ${browserName}`);
     const server = await serve();
-    t.after(() => server.close());
+    let browser;
+    let context;
+    t.after(async () => {
+      try { await context?.close(); }
+      finally {
+        try { await browser?.close(); }
+        finally { await server.close(); }
+      }
+    });
     const options = await engineOptions(server.url);
     const executablePath = process.env[`PHP_WASM_${browserName.toUpperCase()}_EXECUTABLE`];
-    const browser = await playwright[browserName].launch({ headless: true, ...(executablePath ? { executablePath } : {}), ...(browserName === 'chromium' ? { args: ['--no-sandbox'] } : {}) });
-    t.after(() => browser.close());
-    const context = await browser.newContext();
-    t.after(() => context.close());
+    browser = await playwright[browserName].launch({ headless: true, ...(executablePath ? { executablePath } : {}), ...(browserName === 'chromium' ? { args: ['--no-sandbox'] } : {}) });
+    context = await browser.newContext();
     const page = await context.newPage();
     const uncaught = [];
     page.on('pageerror', error => uncaught.push(error.message));
@@ -40,6 +46,35 @@ for (const browserName of browsers) {
       assert.equal(result.http.status, 202);
       assert.deepEqual(result.http.body, [0, 255, 127, 128]);
       assert.ok(result.http.headers.some(([key, value]) => key.toLowerCase() === 'x-php-wasm' && value === 'browser'));
+    });
+
+    await t.test('PHP Fibers can await browser host callbacks and return complete results', async () => {
+      const result = await page.evaluate(async options => {
+        const { createPHP } = await import('/src/index.mjs');
+        const php = await createPHP({ ...options, hostCalls: {
+          double: async payload => {
+            await new Promise(resolve => setTimeout(resolve, 20));
+            return JSON.stringify({ value: JSON.parse(payload).value * 2 });
+          },
+        } });
+        try {
+          await php.fs.writeFile('/workspace/async-fiber.php', `<?php
+$fiber = new Fiber(function () {
+  $result = json_decode(php_wasm_host_call('double', '{"value":21}'), true, 512, JSON_THROW_ON_ERROR);
+  $resumed = Fiber::suspend($result['value']);
+  return $resumed + 1;
+});
+$started = $fiber->start(); $fiber->resume(41);
+echo json_encode([$started, $fiber->getReturn()], JSON_THROW_ON_ERROR);`);
+          const first = await php.run({ script: '/workspace/async-fiber.php' });
+          const repeated = await php.run({ script: '/workspace/async-fiber.php' });
+          return [first, repeated].map(value => ({ exitCode: value.exitCode, output: new TextDecoder().decode(value.stdout), stderr: new TextDecoder().decode(value.stderr) }));
+        } finally { await php.close(); }
+      }, options);
+      for (const value of result) {
+        assert.equal(value.exitCode, 0, value.stderr);
+        assert.deepEqual(JSON.parse(value.output), [42, 42]);
+      }
     });
 
     await t.test('the page stays responsive while PHP is running', async () => {

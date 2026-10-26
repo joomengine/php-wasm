@@ -30,7 +30,7 @@ ICU is built twice: native host generators first, then the WASM library and data
 The result includes full locale data. This deliberately favors correctness and
 one fetchable engine over minimal download size. ZIP supports deflate/store;
 optional ZIP encryption and extra compression codecs are not enabled. GD has
-PNG/GIF support; JPEG/WebP/FreeType are not compiled in this initial profile.
+PNG/GIF/JPEG support; WebP/FreeType are not compiled in this initial profile.
 
 There is no socket proxy or browser TCP server. HTTPS downloads should be made
 by the JavaScript host and written to the virtual filesystem. OpenSSL supports

@@ -117,16 +117,18 @@ PHP defaults to a 256 MiB memory limit and UTC.
 
 Optional `hostCalls` handlers expose explicit asynchronous operations to PHP's
 `php_wasm_host_call(name, payload)` function. Handlers exchange strings, normally
-JSON. They must not call back into the same PHP instance. While a handler is
-active, new calls to that instance reject with `REENTRANT_CALL`; already queued
-operations remain serialized.
+JSON. They must not call back into the same PHP instance. Immediate reentry is
+rejected with `REENTRANT_CALL`; a callback that reenters after an `await` creates
+a cycle bounded by the operation timeout. Unrelated requests arriving while a
+host operation awaits IO are accepted into the normal serialized queue.
 
 ## Static hosting and releases
 
 The runtime serves as ordinary static JavaScript and WebAssembly, including
 on GitHub Pages. Its PHP engine does not require a server, threads or special
-cross-origin isolation headers. Persistent browser instances require IndexedDB
-and Web Locks on a secure origin, such as HTTPS or localhost.
+cross-origin isolation headers. Use HTTPS or localhost for Web Crypto asset
+verification. Persistent browser instances additionally require IndexedDB and
+Web Locks.
 
 If the embedding site sets a Content Security Policy, allow same-origin module
 workers, `blob:` script imports, WebAssembly compilation (`'wasm-unsafe-eval'`)
@@ -169,11 +171,17 @@ native TCP sockets. Download installation packages with browser `fetch`, subject
 to CORS, and write them into the virtual filesystem. A PHP extension being
 compiled does not give it browser network access.
 
+These are **wasm32 builds**: `PHP_INT_SIZE` is 4 and `PHP_INT_MAX` is 2147483647.
+Applications requiring native 64-bit PHP integer semantics must account for
+this difference; use strings or bcmath for larger integer values. OPcache, JIT
+and preloading are disabled because their native shared-memory behavior is not
+supported by this engine. Attempts to enable them through the API are rejected.
+
 The native profile includes DOM/XML, mbstring, intl, ZIP/zlib, OpenSSL, GD, PDO
 and other core facilities. PDO itself is not a MySQL driver. The MariaDB project
 must supply and validate the database integration before this becomes a working
-Joomla playground. GD's initial image profile supports PNG; JPEG/WebP support
-requires additional build inputs and tests.
+Joomla playground. GD's image profile supports PNG, GIF and JPEG; WebP and
+FreeType are not compiled into this profile.
 
 Read [architecture](docs/architecture.md), [security](SECURITY.md) and
 [contribution guidance](CONTRIBUTING.md) before extending the runtime. Own code is

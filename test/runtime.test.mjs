@@ -15,14 +15,33 @@ test(`PHP ${phpVersion}: real WebAssembly runtime`, { timeout: 180_000 }, async 
     const info = JSON.parse(decode(result.stdout));
     assert.equal(info.sapi, 'cli');
     assert.ok(info.version.startsWith(`${phpVersion}.`), info.version);
+    assert.equal(info.integer_size, 4, 'The supported engine target is wasm32');
+    assert.equal(info.integer_max, 2147483647);
     assert.deepEqual(info.args, ['/workspace/cli.php', 'value with spaces', '--example=two', '"literal"', 'üñîçødé']);
     assert.equal(info.argc, 5);
     assert.equal(info.cwd, '/workspace');
     assert.equal(info.stdin, 'line one\nline two\0tail');
+    assert.deepEqual(info.server, { PHP_SELF: '/workspace/cli.php', SCRIPT_NAME: '/workspace/cli.php', SCRIPT_FILENAME: '/workspace/cli.php', PATH_TRANSLATED: '/workspace/cli.php', DOCUMENT_ROOT: '' });
     const extensions = new Set(info.extensions.map(name => name.toLowerCase()));
     for (const extension of ['bcmath', 'ctype', 'date', 'dom', 'exif', 'fileinfo', 'filter', 'gd', 'hash', 'iconv', 'intl', 'json', 'libxml', 'mbstring', 'openssl', 'pcre', 'pdo', 'session', 'simplexml', 'spl', 'tokenizer', 'xml', 'xmlreader', 'xmlwriter', 'zip', 'zlib']) {
       assert.ok(extensions.has(extension), `Missing native extension: ${extension}`);
     }
+  });
+
+  await t.test('CLI defaults match process behavior and unsupported opcode caching stays disabled', async () => {
+    await php.fs.writeFile('/workspace/ini.php', `<?php
+$names = ['html_errors', 'register_argc_argv', 'implicit_flush', 'output_buffering', 'max_execution_time', 'max_input_time'];
+echo json_encode(['cli' => array_combine($names, array_map('ini_get', $names)), 'opcache' => ini_get('opcache.enable'), 'opcache_cli' => ini_get('opcache.enable_cli')], JSON_THROW_ON_ERROR);`);
+    const result = await php.run({ script: '/workspace/ini.php' });
+    assert.equal(result.exitCode, 0, decode(result.stderr));
+    const settings = JSON.parse(decode(result.stdout));
+    assert.deepEqual(settings.cli, { html_errors: '0', register_argc_argv: '1', implicit_flush: '1', output_buffering: '0', max_execution_time: '0', max_input_time: '-1' });
+    assert.ok([false, '', '0'].includes(settings.opcache));
+    assert.ok([false, '', '0'].includes(settings.opcache_cli));
+    for (const ini of [{ 'opcache.enable': true }, { 'opcache.enable_cli': 1 }, { 'opcache.jit': 'tracing' }, { 'opcache.jit_buffer_size': '1M' }, { 'opcache.preload': '/workspace/preload.php' }]) {
+      await assert.rejects(async () => php.run({ script: '/workspace/ini.php', ini }), error => error.code === 'INVALID_ARGUMENT');
+    }
+    assert.equal((await php.run({ script: '/workspace/ini.php' })).exitCode, 0);
   });
 
   await t.test('repeated CLI invocations do not leak standard stream file descriptors', async () => {
@@ -157,6 +176,20 @@ echo json_encode(['name' => $file['name'], 'type' => $file['type'], 'size' => $f
     assert.equal(JSON.parse(decode(second.body)).count, 2);
   });
 
+  await t.test('CLI sessions can start before output and survive separate invocations', async () => {
+    await php.fs.writeFile('/workspace/cli-session.php', `<?php
+session_id('php-wasm-cli-session');
+if (!session_start()) throw new RuntimeException('CLI session did not start');
+$_SESSION['count'] = ($_SESSION['count'] ?? 0) + 1;
+$count = $_SESSION['count']; session_write_close();
+echo json_encode(['count' => $count], JSON_THROW_ON_ERROR);`);
+    for (const count of [1, 2]) {
+      const result = await php.run({ script: '/workspace/cli-session.php' });
+      assert.equal(result.exitCode, 0, decode(result.stderr));
+      assert.deepEqual(JSON.parse(decode(result.stdout)), { count });
+    }
+  });
+
   await t.test('exit and fatal errors do not poison subsequent requests', async () => {
     const exited = await php.run({ script: '/workspace/exit.php' });
     assert.equal(exited.exitCode, 23);
@@ -231,19 +264,23 @@ $zip->addFromString('hello.txt', 'extension payload'); $zip->close();
 $zip->open('/workspace/extension-check.zip'); $zipValue = $zip->getFromName('hello.txt'); $zip->close();
 $image = imagecreatetruecolor(2, 3); $size = [imagesx($image), imagesy($image)];
 ob_start(); imagepng($image); $png = ob_get_clean();
+ob_start(); imagejpeg($image, null, 80); $jpeg = ob_get_clean();
+$decodedJpeg = imagecreatefromstring($jpeg);
 echo json_encode([
   'dom' => $document->getElementsByTagName('child')[0]->textContent,
   'mbstring' => mb_strtoupper('über', 'UTF-8'),
   'intl' => Normalizer::normalize("e\\u{0301}", Normalizer::FORM_C),
   'zip' => $zipValue, 'zlib' => gzdecode(gzencode('compressed text')),
   'openssl' => openssl_digest('abc', 'sha256'), 'gd' => $size, 'png' => bin2hex(substr($png, 0, 8)),
+  'jpeg' => [bin2hex(substr($jpeg, 0, 2)), imagesx($decodedJpeg), imagesy($decodedJpeg)],
+  'fileinfo' => (new finfo(FILEINFO_MIME_TYPE))->buffer($jpeg),
   'iconv' => bin2hex(iconv('UTF-8', 'ISO-8859-1', 'é')),
   'locale' => (new IntlDateFormatter('en_US', IntlDateFormatter::MEDIUM, IntlDateFormatter::NONE, 'UTC'))->format(0),
   'random' => strlen(random_bytes(32)), 'bcmath' => bcadd('99999999999999999999', '1'),
 ], JSON_THROW_ON_ERROR);`);
     const result = await php.run({ script: '/workspace/extensions.php' });
     assert.equal(result.exitCode, 0, decode(result.stderr));
-    assert.deepEqual(JSON.parse(decode(result.stdout)), { dom: 'Joomla', mbstring: 'ÜBER', intl: 'é', zip: 'extension payload', zlib: 'compressed text', openssl: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad', gd: [2, 3], png: '89504e470d0a1a0a', iconv: 'e9', locale: 'Jan 1, 1970', random: 32, bcmath: '100000000000000000000' });
+    assert.deepEqual(JSON.parse(decode(result.stdout)), { dom: 'Joomla', mbstring: 'ÜBER', intl: 'é', zip: 'extension payload', zlib: 'compressed text', openssl: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad', gd: [2, 3], png: '89504e470d0a1a0a', jpeg: ['ffd8', 2, 3], fileinfo: 'image/jpeg', iconv: 'e9', locale: 'Jan 1, 1970', random: 32, bcmath: '100000000000000000000' });
   });
 
   await t.test('filesystem binary operations and serialized concurrent execution', async () => {
@@ -308,13 +345,10 @@ test('PHP can await asynchronous host bridge calls without blocking or deadlocki
       return JSON.stringify({ result: JSON.parse(payload).value * 2 });
     },
     reentry: async () => {
-      const codes = [];
-      try { await php.fs.readFile('/workspace/bridge.php'); }
-      catch (error) { codes.push(error.code); }
-      try { await php.close(); }
-      catch (error) { codes.push(error.code); }
-      if (codes.length !== 2) throw new Error('Runtime allowed a deadlocking reentrant host call');
-      return JSON.stringify({ codes });
+      const calls = [php.fs.readFile('/workspace/bridge.php'), php.close()];
+      const results = await Promise.allSettled(calls);
+      if (results.some(result => result.status !== 'rejected')) throw new Error('Runtime allowed a deadlocking reentrant host call');
+      return JSON.stringify({ codes: results.map(result => result.reason.code) });
     },
     rejected: async () => { throw new Error('expected host failure'); },
     nulResult: async () => 'a\0b',
@@ -350,6 +384,35 @@ test('asset integrity mismatch fails before PHP executes', { timeout: 60_000 }, 
   await assert.rejects(createPHP(options), error => error.code === 'INTEGRITY_MISMATCH');
 });
 
+test('unrelated work and close queue while an asynchronous host callback is pending', { timeout: 60_000 }, async () => {
+  let entered;
+  let release;
+  const callbackStarted = new Promise(resolve => { entered = resolve; });
+  const gate = new Promise(resolve => { release = resolve; });
+  const php = await createPHP({ ...await engineOptions(), hostCalls: {
+    gate: () => { entered(); return gate.then(() => 'released'); },
+  } });
+  try {
+    await php.fs.writeFile('/workspace/state.txt', 'saved state');
+    await php.fs.writeFile('/workspace/gated.php', '<?php echo php_wasm_host_call("gate", "{}");');
+    await php.fs.writeFile('/workspace/queued.php', '<?php echo "queued execution";');
+    const running = php.run({ script: '/workspace/gated.php' });
+    await callbackStarted;
+    const reading = php.fs.readFile('/workspace/state.txt');
+    const queued = php.run({ script: '/workspace/queued.php' });
+    const closing = php.close();
+    release();
+    const [first, bytes, last] = await Promise.all([running, reading, queued]);
+    assert.equal(first.exitCode, 0);
+    assert.equal(decode(first.stdout), 'released');
+    assert.equal(decode(bytes), 'saved state');
+    assert.equal(last.exitCode, 0);
+    assert.equal(decode(last.stdout), 'queued execution');
+    await closing;
+    assert.equal(php.state, 'closed');
+  } finally { release(); await php.close(); }
+});
+
 test('closing PHP standard streams does not break the next CLI invocation', { timeout: 60_000 }, async () => {
   const php = await createPHP(await engineOptions());
   try {
@@ -383,6 +446,11 @@ test('request and queue limits reject excess work without poisoning the runtime'
   try {
     await assert.rejects(async () => php.fs.writeFile('/workspace/large.bin', new Uint8Array(8192)), error => error.code === 'REQUEST_LIMIT');
     await php.fs.writeFile('/workspace/ok.php', '<?php echo "ok";');
+    await assert.rejects(async () => php.run({ script: '/workspace/ok.php', args: Array(4097).fill('') }), error => error.code === 'INVALID_ARGUMENT');
+    await assert.rejects(async () => php.request({ script: '/workspace/ok.php', url: 'http://localhost/', headers: Array.from({ length: 1025 }, () => ['X-Test', 'value']) }), error => error.code === 'INVALID_ARGUMENT');
+    await assert.rejects(async () => php.run({ script: '/workspace/ok.php', args: Array(200).fill('') }), error => error.code === 'REQUEST_LIMIT');
+    await assert.rejects(async () => php.run({ script: '/workspace/ok.php', args: new Array(1) }), error => error.code === 'INVALID_ARGUMENT');
+    await assert.rejects(async () => php.request({ script: '/workspace/ok.php', url: 'http://localhost/', headers: new Array(1) }), error => error.code === 'INVALID_ARGUMENT');
     const accepted = php.run({ script: '/workspace/ok.php' });
     await assert.rejects(async () => php.run({ script: '/workspace/ok.php' }), error => error.code === 'QUEUE_LIMIT');
     assert.equal(decode((await accepted).stdout), 'ok');
@@ -409,4 +477,22 @@ test('timed-out PHP is terminated and close is idempotent', { timeout: 60_000 },
     await php.close();
     await php.close();
   }
+});
+
+test('a late host callback result is ignored after its worker times out', { timeout: 60_000 }, async () => {
+  let release;
+  let entered = false;
+  const delayed = new Promise(resolve => { release = resolve; });
+  const php = await createPHP({ ...await engineOptions(), timeoutMs: 500, hostCalls: {
+    delayed: () => { entered = true; return delayed; },
+  } });
+  try {
+    await php.fs.writeFile('/workspace/delayed.php', '<?php echo php_wasm_host_call("delayed", "{}");');
+    await assert.rejects(php.run({ script: '/workspace/delayed.php' }), error => error.code === 'TIMEOUT');
+    assert.equal(entered, true);
+    assert.equal(php.state, 'closed');
+    release('too late');
+    await new Promise(resolve => setTimeout(resolve, 20));
+    await assert.rejects(php.fs.readFile('/workspace/delayed.php'), error => error.code === 'CLOSED');
+  } finally { release('too late'); await php.close(); }
 });

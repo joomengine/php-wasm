@@ -156,16 +156,21 @@ class PHPRuntime {
   async #receive(message) {
     if (!message || this.#state === 'closed') return;
     if (message.type === 'host-call') {
-      this.#hostCallDepth++;
       try {
         if (!Object.hasOwn(this.#hostCalls, message.name)) fail('UNKNOWN_HOST_CALL', `No host callback registered for ${message.name}`);
-        const value = await this.#hostCalls[message.name](message.payload);
+        let result;
+        // Detect immediate callback cycles without rejecting unrelated callers while
+        // asynchronous host I/O is pending. After-await cycles are bounded by timeout.
+        this.#hostCallDepth++;
+        try { result = this.#hostCalls[message.name](message.payload); }
+        finally { this.#hostCallDepth--; }
+        const value = await result;
         string(value, 'host callback result', { empty: true });
         if (payloadBytes(value) > this.#options.maxRequestBytes) fail('REQUEST_LIMIT', 'Host callback result exceeds maxRequestBytes');
         if (this.#state !== 'closed') this.#worker.postMessage({ type: 'host-result', id: message.id, value });
       } catch (error) {
         if (this.#state !== 'closed') this.#worker.postMessage({ type: 'host-result', id: message.id, error: serializeError(error) });
-      } finally { this.#hostCallDepth--; }
+      }
       return;
     }
     const pending = this.#pending;

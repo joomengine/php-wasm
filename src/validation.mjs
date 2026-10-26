@@ -1,6 +1,13 @@
 import { fail } from './errors.mjs';
 
 const encoder = new TextEncoder();
+const DISABLED_ONLY_INI = new Map([
+  ['opcache.enable', ['', '0', 'off', 'false', 'no', 'none']],
+  ['opcache.enable_cli', ['', '0', 'off', 'false', 'no', 'none']],
+  ['opcache.jit', ['', '0', 'off', 'disable', 'false', 'no']],
+  ['opcache.jit_buffer_size', ['', '0', '0k', '0m', '0g']],
+  ['opcache.preload', ['']],
+]);
 export const DEFAULT_TIMEOUT_MS = 30_000;
 export const DEFAULT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 export const DEFAULT_MAX_REQUEST_BYTES = 64 * 1024 * 1024;
@@ -59,6 +66,10 @@ export function iniText(value = {}) {
     }
     const value = typeof raw === 'boolean' ? (raw ? '1' : '0') : String(raw);
     if (/[\r\n\0]/.test(value)) fail('INVALID_ARGUMENT', `INI setting ${key} cannot contain newlines or NUL bytes`);
+    const allowed = DISABLED_ONLY_INI.get(key.toLowerCase());
+    if (allowed && !allowed.includes(value.toLowerCase())) {
+      fail('INVALID_ARGUMENT', `${key} must remain disabled in the WebAssembly runtime`);
+    }
     return `${key}="${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
   }).join('\n');
 }
@@ -67,6 +78,7 @@ export function runOptions(input) {
   record(input, 'run options');
   const args = input.args ?? [];
   if (!Array.isArray(args)) fail('INVALID_ARGUMENT', 'args must be an array of strings');
+  if (args.length > 4096) fail('INVALID_ARGUMENT', 'args must contain at most 4096 arguments');
   return {
     script: workspacePath(input.script, 'script'),
     args: Array.from(args, (arg, index) => string(arg, `args[${index}]`, { empty: true })),
@@ -85,6 +97,7 @@ export function requestOptions(input) {
   if (!/^[!#$%&'*+.^_`|~0-9A-Z-]+$/.test(method)) fail('INVALID_ARGUMENT', 'Invalid HTTP method');
   const headers = input.headers ?? [];
   if (!Array.isArray(headers)) fail('INVALID_ARGUMENT', 'headers must be an array of [name, value] pairs');
+  if (headers.length > 1024) fail('INVALID_ARGUMENT', 'headers must contain at most 1024 pairs');
   const normalized = Array.from(headers, (pair) => {
     if (!Array.isArray(pair) || pair.length !== 2) fail('INVALID_ARGUMENT', 'Each header must be a [name, value] pair');
     const name = string(pair[0], 'header name').toLowerCase();
@@ -104,9 +117,9 @@ export function requestOptions(input) {
 }
 
 export function payloadBytes(value) {
-  if (value instanceof Uint8Array) return value.byteLength;
-  if (typeof value === 'string') return encoder.encode(value).byteLength;
-  if (Array.isArray(value)) return value.reduce((total, item) => total + payloadBytes(item), 0);
-  if (value && typeof value === 'object') return Object.entries(value).reduce((total, [key, val]) => total + payloadBytes(key) + payloadBytes(val), 0);
+  if (value instanceof Uint8Array) return 24 + value.byteLength;
+  if (typeof value === 'string') return 16 + encoder.encode(value).byteLength;
+  if (Array.isArray(value)) return value.reduce((total, item) => total + payloadBytes(item), 24 + value.length * 8);
+  if (value && typeof value === 'object') return Object.entries(value).reduce((total, [key, val]) => total + payloadBytes(key) + payloadBytes(val) + 8, 32);
   return 8;
 }

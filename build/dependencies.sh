@@ -11,14 +11,14 @@ fingerprint=$({ sha256sum "$ROOT/versions.json" "$ROOT/build/dependencies.sh" "$
 if [[ -f "$BUILD/dependencies.ready" ]] && [[ $(cat "$BUILD/dependencies.ready") == "$fingerprint" ]]; then exit 0; fi
 if [[ -f "$BUILD/dependencies.build-id" ]] && [[ $(cat "$BUILD/dependencies.build-id") != "$fingerprint" ]]; then
   rm -rf "$PREFIX" "$BUILD/icu-host" "$BUILD/icu-wasm" "$BUILD/licenses"
-  for name in zlib openssl libxml2 libzip oniguruma icu libpng; do
+  for name in zlib openssl libxml2 libzip oniguruma icu libpng libjpeg; do
     rm -rf "$SOURCES/$name" "$BUILD/obj-$name"
   done
   mkdir -p "$PREFIX" "$BUILD/licenses"
 fi
 printf '%s\n' "$fingerprint" > "$BUILD/dependencies.build-id"
 
-for name in zlib openssl libxml2 libzip oniguruma icu libpng; do
+for name in zlib openssl libxml2 libzip oniguruma icu libpng libjpeg; do
   fetch_source ".libraries.$name" "$SOURCES/$name"
 done
 
@@ -26,6 +26,8 @@ done
 cmake_library libpng -DPNG_SHARED=OFF -DPNG_TESTS=OFF -DPNG_TOOLS=OFF \
   -DZLIB_LIBRARY="$PREFIX/lib/libz.a" -DZLIB_INCLUDE_DIR="$PREFIX/include"
 cmake_library oniguruma -DBUILD_TEST=OFF
+cmake_library libjpeg -DENABLE_SHARED=OFF -DENABLE_STATIC=ON -DWITH_SIMD=OFF \
+  -DWITH_TURBOJPEG=OFF -DENABLE_TESTING=OFF
 cmake_library libxml2 -DLIBXML2_WITH_PROGRAMS=OFF -DLIBXML2_WITH_TESTS=OFF \
   -DLIBXML2_WITH_PYTHON=OFF -DLIBXML2_WITH_THREADS=OFF -DLIBXML2_WITH_ICONV=OFF \
   -DLIBXML2_WITH_ZLIB=ON -DLIBXML2_WITH_LZMA=OFF \
@@ -54,7 +56,7 @@ mkdir -p "$BUILD/icu-host" "$BUILD/icu-wasm"
   emconfigure "$SOURCES/icu/source/configure" --host=wasm32-unknown-emscripten \
     --with-cross-build="$BUILD/icu-host" --prefix="$PREFIX" --disable-shared --enable-static \
     --disable-tests --disable-samples --disable-extras --disable-tools \
-    --disable-dyload --disable-plugins --with-data-packaging=archive --disable-renaming \
+    --disable-dyload --disable-plugins --with-data-packaging=archive \
     icu_cv_host_frag=mh-linux \
     CFLAGS='-O2 -fPIC -DUCONFIG_NO_THREADS=1' CXXFLAGS='-O2 -fPIC -DUCONFIG_NO_THREADS=1'
   emmake make -j"$JOBS"
@@ -67,7 +69,7 @@ icu_version=$(jq -r '.libraries.icu.version' "$ROOT/versions.json")
 icu_major=${icu_version%%.*}
 mkdir -p "$BUILD/icu-embedded"
 "$BUILD/icu-host/bin/genccode" -q -e "icudt$icu_major" -f icudata \
-  -d "$BUILD/icu-embedded" "$PREFIX/share/icu/$icu_version/icudt${icu_major}l.dat"
+  -d "$BUILD/icu-embedded" "$SOURCES/icu/source/data/in/icudt${icu_major}l.dat"
 emcc -O2 -I"$SOURCES/icu/source/common" -I"$BUILD/icu-wasm/common" \
   -c "$BUILD/icu-embedded/icudata.c" -o "$BUILD/icu-embedded/icudata.o"
 rm -f "$PREFIX/lib/libicudata.a"
@@ -80,4 +82,5 @@ save_license libzip LICENSE
 save_license oniguruma COPYING
 save_license icu LICENSE
 save_license libpng LICENSE
+save_license libjpeg LICENSE.md README.ijg
 printf '%s\n' "$fingerprint" > "$BUILD/dependencies.ready"

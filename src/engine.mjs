@@ -184,10 +184,17 @@ export class Engine {
       }
       module.FS.chdir(input.cwd);
       module.phpWasm.request = mode === 'run'
-        ? { method: 'GET', uri: input.script, query: '', contentType: '', cookie: '', body: new Uint8Array(), stdin: input.stdin, server: {}, ini: input.ini }
+        ? { method: 'GET', uri: input.script, query: '', contentType: '', cookie: '', body: new Uint8Array(), stdin: input.stdin, server: { PHP_SELF: input.script, SCRIPT_NAME: input.script, SCRIPT_FILENAME: input.script, PATH_TRANSLATED: input.script, DOCUMENT_ROOT: '' }, ini: input.ini }
         : httpInput(input);
       module.phpWasm.request.env = { ...module.ENV };
-      module.phpWasm.request.ini = 'memory_limit=256M\ndate.timezone=UTC\nlog_errors=1\ndisplay_errors=0\nsession.save_path="/workspace/.php-wasm/sessions"\n' + input.ini;
+      const cliDefaults = mode === 'run'
+        ? 'html_errors=0\nregister_argc_argv=1\nimplicit_flush=1\noutput_buffering=0\nmax_execution_time=0\nmax_input_time=-1\n'
+        : '';
+      module.phpWasm.request.ini = 'memory_limit=256M\ndate.timezone=UTC\nlog_errors=1\ndisplay_errors=0\nsession.save_path="/workspace/.php-wasm/sessions"\n'
+        + cliDefaults + input.ini
+        // PHP 8.5 bundles OPcache. Shared-memory caching, JIT and process preloading
+        // cannot run in this isolated Emscripten host, regardless of php.ini files.
+        + '\nopcache.enable=0\nopcache.enable_cli=0\nopcache.jit=off\nopcache.jit_buffer_size=0\nopcache.preload=\n';
       const argv = mode === 'run' ? [input.script, ...input.args] : [];
       const pointers = argv.map((arg) => {
         const size = module.lengthBytesUTF8(arg) + 1;

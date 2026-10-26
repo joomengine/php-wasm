@@ -43,7 +43,9 @@ interface CommonOptions {
   persistence?: { key: string };
   /**
    * Async host capabilities available to PHP's php_wasm_host_call(name, payloadJson).
-   * Handlers return strings, normally JSON. A handler cannot reenter its own runtime.
+   * Handlers return strings, normally JSON. Handlers must not await their own runtime.
+   * Immediate reentry is rejected; after-await callback cycles are bounded by timeout.
+   * Unrelated callers can queue work while a handler awaits external I/O.
    * This hook does not implement mysqli, PDO MySQL, networking, or a database server.
    */
   hostCalls?: Record<string, (payloadJson: string) => string | Promise<string>>;
@@ -61,12 +63,12 @@ export interface ExecutionOptions {
   cwd?: string;
   /** Invocation-local environment variables. */
   env?: Record<string, string>;
-  /** Invocation-local php.ini settings. Newline injection is rejected. */
+  /** Invocation-local php.ini settings. Newline injection and enabling OPcache/JIT/preloading are rejected. */
   ini?: Record<string, string | number | boolean>;
 }
 
 export interface RunOptions extends ExecutionOptions {
-  /** Arguments after argv[0] (the script). Shell syntax is never interpreted. */
+  /** At most 4096 arguments after argv[0] (the script). Shell syntax is never interpreted. */
   args?: string[];
   /** Binary data exposed through PHP's STDIN stream. */
   stdin?: Uint8Array;
@@ -78,7 +80,7 @@ export interface RequestOptions extends ExecutionOptions {
   /** Absolute HTTP(S) URL used to populate PHP request globals. No network fetch is performed. */
   url: string;
   method?: string;
-  /** Pairs preserve duplicate headers. */
+  /** At most 1024 pairs; duplicate headers are preserved. */
   headers?: [string, string][];
   body?: Uint8Array;
 }

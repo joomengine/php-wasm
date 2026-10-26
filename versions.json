@@ -56,6 +56,11 @@
       "version": "1.6.51",
       "repository": "https://github.com/pnggroup/libpng.git",
       "commit": "49363adcfaf098748d7a4c8c624ad8c45a8c3a86"
+    },
+    "libjpeg": {
+      "version": "3.2.0",
+      "url": "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.2.0/libjpeg-turbo-3.2.0.tar.gz",
+      "sha256": "6f30092cef9fb839779646608f4ee14ae3cbac989c47fa05e841b0841f09878e"
     }
   }
 }
