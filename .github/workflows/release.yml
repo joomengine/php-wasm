@@ -28,12 +28,12 @@ jobs:
           }
           JS
 
-  tested-engines:
+  tested-release:
     needs: verify-tag
     uses: ./.github/workflows/ci.yml
 
   publish:
-    needs: tested-engines
+    needs: tested-release
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -46,15 +46,12 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
-          cache: npm
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
-          pattern: php-*
-          path: dist
-          merge-multiple: true
-      - run: npm ci --ignore-scripts
-      - name: Verify receipts and package release
-        run: npm run release:package
+          name: verified-release
+          path: release
+      - name: Verify the tested release bundle
+        run: node scripts/verify-release.mjs
       - name: Attest release artifacts
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
