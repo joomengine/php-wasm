@@ -1,8 +1,20 @@
+import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readCatalog, root } from './catalog.mjs';
+
+export function mariaDBDriverDescriptor(catalog) {
+  const driver = catalog.extensions.pdo_mariadb_wasm;
+  return {
+    version: driver.version,
+    protocolVersion: driver.protocolVersion,
+    pdoDriver: 'mysql',
+    hostCall: 'mariadb.v1',
+    source: { repository: driver.repository, commit: driver.commit },
+  };
+}
 
 export async function createManifest({ directory = path.join(root, 'dist'), versions } = {}) {
   const catalog = await readCatalog();
@@ -19,10 +31,22 @@ export async function createManifest({ directory = path.join(root, 'dist'), vers
     if (!module.length || wasm.subarray(0, 8).toString('hex') !== '0061736d01000000') {
       throw new Error(`PHP ${minor} has invalid engine artifacts`);
     }
+    const moduleSha256 = createHash('sha256').update(module).digest('hex');
+    const wasmSha256 = createHash('sha256').update(wasm).digest('hex');
+    const driver = mariaDBDriverDescriptor(catalog);
+    const marker = JSON.parse(await readFile(path.join(directory, 'php', minor, 'mariadb-driver.json'), 'utf8'));
+    assert.deepEqual(marker, {
+      bridgeVersion: driver.version,
+      protocolVersion: driver.protocolVersion,
+      source: driver.source,
+      moduleSha256,
+      wasmSha256,
+    }, `PHP ${minor}: MariaDB driver build metadata does not match the source catalog and engine bytes; rebuild this engine`);
     engines[minor] = {
       phpVersion: catalog.php[minor].version,
-      module: { url: modulePath, sha256: createHash('sha256').update(module).digest('hex') },
-      wasm: { url: wasmPath, sha256: createHash('sha256').update(wasm).digest('hex') },
+      module: { url: modulePath, sha256: moduleSha256 },
+      wasm: { url: wasmPath, sha256: wasmSha256 },
+      extensions: { pdo_mariadb_wasm: driver },
     };
   }
   const manifest = { schemaVersion: 1, abiVersion: 1, runtimeVersion: pkg.version, engines };

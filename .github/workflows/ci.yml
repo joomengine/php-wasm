@@ -69,10 +69,16 @@ jobs:
           node scripts/manifest.mjs --php "$PHP_WASM_VERSION"
       - name: Exercise real PHP in Node.js
         run: npm run test:integration
+      - name: Prepare verified MariaDB bridge release
+        run: npm run prepare:mariadb
+      - name: Exercise PHP PDO against real MariaDB WASM in Node.js
+        run: npm run test:database
       - name: Install browser test dependencies
         run: npx playwright install --with-deps chromium firefox
       - name: Exercise real PHP in Chromium and Firefox
         run: npm run test:browser
+      - name: Exercise PHP PDO against real MariaDB WASM in Chromium and Firefox
+        run: npm run test:database:browser
       - name: Record tested artifact hashes
         run: node scripts/test-receipt.mjs "$PHP_WASM_VERSION"
       - name: Retain tested engine

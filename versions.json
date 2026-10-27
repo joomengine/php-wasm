@@ -66,5 +66,17 @@
       "url": "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.2.0/libjpeg-turbo-3.2.0.tar.gz",
       "sha256": "6f30092cef9fb839779646608f4ee14ae3cbac989c47fa05e841b0841f09878e"
     }
+  },
+  "extensions": {
+    "pdo_mariadb_wasm": {
+      "version": "0.1.0",
+      "protocolVersion": 1,
+      "repository": "https://github.com/joomengine/mariadb-wasm-bridge.git",
+      "commit": "dcf9c05b1ddfc7deb3d77f572cfe81381effc1a8",
+      "runtimeArchive": {
+        "url": "https://github.com/joomengine/mariadb-wasm-bridge/releases/download/v0.1.0/mariadb-wasm-bridge-0.1.0.tar.gz",
+        "sha256": "c1b80c3a5588cae611ff3137682905a1d1e7e6d176c2eaafcb53dc4350fd5d29"
+      }
+    }
   }
 }

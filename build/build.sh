@@ -19,8 +19,18 @@ flock 8
 # package's browser-facing "type": "module" setting change those probes.
 printf '{"type":"commonjs"}\n' > "$BUILD/package.json"
 source "$ROOT/build/common.sh"
+source "$ROOT/build/extension.sh"
 bash "$ROOT/build/dependencies.sh"
+driver_dir="$SOURCES/pdo_mariadb_wasm"
+fetch_source '.extensions.pdo_mariadb_wasm' "$driver_dir"
+driver_fingerprint=$(pdo_mariadb_fingerprint "$driver_dir")
 source_dir="$SOURCES/php-$minor"
+# A different driver must not reuse PHP configure results or native objects.
+# Missing markers also invalidate PHP trees built before driver integration.
+if [[ -f "$source_dir/.source-ready" ]] && \
+    [[ ! -f "$source_dir/.pdo-mariadb-staged" || $(cat "$source_dir/.pdo-mariadb-staged") != "$driver_fingerprint" ]]; then
+  rm -f "$source_dir/.source-ready"
+fi
 fiber_patch="$ROOT/patches/php-$minor-fibers.patch"
 fiber_fingerprint=$(sha256sum "$fiber_patch" | cut -d' ' -f1)
 if [[ -f "$source_dir/.fibers-patched" ]] && [[ $(cat "$source_dir/.fibers-patched") != "$fiber_fingerprint" ]]; then
@@ -35,8 +45,11 @@ if [[ ! -f "$source_dir/.fibers-patched" ]]; then
   printf '%s\n' "$fiber_fingerprint" > "$source_dir/.fibers-patched"
   printf '%s\n' "$source_fingerprint" > "$source_dir/.source-ready"
 fi
+stage_pdo_mariadb "$source_dir" "$driver_dir" "$driver_fingerprint"
 output="$ROOT/dist/php/$minor"
 mkdir -p "$output/licenses"
+# A failed rebuild must not leave an older proof usable with replaced binaries.
+rm -f "$output/mariadb-driver.json"
 (
   cd "$source_dir"
   # Configure probes run in Node through emconfigure. Host libraries are
@@ -47,7 +60,7 @@ mkdir -p "$output/licenses"
     --disable-fiber-asm --without-pcre-jit --disable-opcache-jit --without-pear \
     --with-config-file-path=/config --with-config-file-scan-dir=/config/conf.d \
     --enable-bcmath --enable-calendar --enable-ctype --enable-exif --enable-fileinfo \
-    --enable-filter --enable-mbstring --enable-pdo --enable-phar --enable-session --enable-tokenizer \
+    --enable-filter --enable-mbstring --enable-pdo --enable-pdo-mariadb-wasm --enable-phar --enable-session --enable-tokenizer \
     --with-iconv --with-openssl --with-zlib --with-zip --enable-intl --enable-gd --with-jpeg \
     --with-libxml --enable-dom --enable-simplexml --enable-xml --enable-xmlreader --enable-xmlwriter \
     ac_cv_func_fork=no ac_cv_func_vfork=no ac_cv_func_posix_spawn=no \
@@ -76,6 +89,8 @@ while IFS= read -r -d '' notice; do
 done < <(find "$source_dir" -type f \( -iname LICENSE -o -iname 'LICENSE.*' \
   -o -iname LICENCE -o -iname 'LICENCE.*' -o -iname COPYING -o -iname 'COPYING.*' \
   -o -iname COPYRIGHT -o -iname 'COPYRIGHT.*' -o -iname NOTICE -o -iname 'NOTICE.*' \) -print0)
+mkdir -p "$output/licenses/pdo_mariadb_wasm"
+cp "$driver_dir/LICENSE" "$driver_dir/NOTICE" "$output/licenses/pdo_mariadb_wasm/"
 cp "$ROOT/LICENSE" "$output/licenses/Apache-2.0.txt"
 cp "$ROOT/patches/NOTICE" "$output/licenses/patches-NOTICE.txt"
 emscripten_root=$(dirname "$(command -v emcc)")
@@ -88,4 +103,9 @@ cp "$emscripten_root/system/lib/compiler-rt/LICENSE.TXT" "$output/licenses/emscr
 if [[ -f "$emscripten_root/system/lib/libunwind/LICENSE.TXT" ]]; then
   cp "$emscripten_root/system/lib/libunwind/LICENSE.TXT" "$output/licenses/emscripten/libunwind-LICENSE.TXT"
 fi
+jq --arg moduleSha256 "$(sha256sum "$output/php.mjs" | cut -d' ' -f1)" \
+  --arg wasmSha256 "$(sha256sum "$output/php.wasm" | cut -d' ' -f1)" \
+  '.extensions.pdo_mariadb_wasm | {bridgeVersion: .version, protocolVersion,
+    source: {repository, commit}, moduleSha256: $moduleSha256, wasmSha256: $wasmSha256}' \
+  "$ROOT/versions.json" > "$output/mariadb-driver.json"
 printf 'Built PHP %s: %s\n' "$(jq -r ".php[\"$minor\"].version" "$ROOT/versions.json")" "$output"

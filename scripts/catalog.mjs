@@ -21,6 +21,14 @@ export async function readCatalog() {
     throw new Error('An exact Emscripten version is required');
   }
   for (const [name, source] of Object.entries(catalog.libraries ?? {})) validateSource(source, name);
+  const driver = catalog.extensions?.pdo_mariadb_wasm;
+  if (!driver || !/^\d+\.\d+\.\d+$/.test(driver.version ?? '') || driver.protocolVersion !== 1) {
+    throw new Error('A versioned pdo_mariadb_wasm source with protocolVersion 1 is required');
+  }
+  validateSource(driver, 'pdo_mariadb_wasm');
+  if (!driver.repository) throw new Error('pdo_mariadb_wasm requires an exact source Git commit');
+  if (!driver.runtimeArchive) throw new Error('pdo_mariadb_wasm requires a verified runtime archive for integration tests');
+  validateSource(driver.runtimeArchive, 'MariaDB bridge test runtime');
   return catalog;
 }
 
