@@ -5,12 +5,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readCatalog, root } from './catalog.mjs';
 import { mariaDBDriverDescriptor } from './manifest.mjs';
+import { verifyReleaseVersion } from './release-version.mjs';
 
 export async function verifyRelease(directory = path.join(root, 'release')) {
-  const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
   const catalog = await readCatalog();
   const tag = process.env.GITHUB_REF_TYPE === 'tag' ? process.env.GITHUB_REF_NAME : process.env.RELEASE_TAG;
-  if (tag && tag !== `v${pkg.version}`) throw new Error(`Tag ${tag} does not match package version v${pkg.version}`);
+  const pkg = await verifyReleaseVersion({ tag });
   const archive = `php-wasm-${pkg.version}.tar.gz`;
   const assets = [archive, 'runtime-manifest.json'];
   assert.deepEqual((await readdir(directory)).sort(), [...assets, 'SHA256SUMS'].sort(), 'Unexpected release assets');

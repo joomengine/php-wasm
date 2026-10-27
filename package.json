@@ -1,6 +1,6 @@
 {
   "name": "@joomengine/php-wasm",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Independent PHP WebAssembly runtime for browser workers and Node.js",
   "type": "module",
   "license": "Apache-2.0",
@@ -36,11 +36,14 @@
     "check": "node scripts/check.mjs",
     "build": "bash build/build.sh",
     "manifest": "node scripts/manifest.mjs",
-    "test": "npm run check && npm run test:build && npm run test:integration && npm run test:browser && npm run prepare:mariadb && npm run test:database && npm run test:database:browser",
+    "test": "npm run check && npm run test:release && npm run test:build && npm run test:integration && npm run test:browser && npm run prepare:mariadb && npm run test:database && npm run test:database:browser",
+    "test:release": "node --test test/release-version.test.mjs",
     "test:build": "node --test test/source-downloads.test.mjs test/extension-source.test.mjs test/mariadb-release.test.mjs test/manifest.test.mjs",
     "test:integration": "node --test test/runtime.test.mjs",
     "test:browser": "node --test test/browser.test.mjs",
     "release:package": "node scripts/package-release.mjs",
+    "release:prepare": "npm version --no-git-tag-version --ignore-scripts",
+    "release:check": "node scripts/release-version.mjs",
     "prepare:mariadb": "node scripts/prepare-mariadb-tests.mjs",
     "test:database": "node --test test/database.test.mjs",
     "test:database:browser": "node --test test/database-browser.test.mjs"

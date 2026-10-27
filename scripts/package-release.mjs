@@ -8,11 +8,11 @@ import { createGzip } from 'node:zlib';
 import { readCatalog, root } from './catalog.mjs';
 import { createManifest } from './manifest.mjs';
 import { verificationSuites, verifyDatabaseReceipts } from './database-test-receipt.mjs';
+import { verifyReleaseVersion } from './release-version.mjs';
 
 const catalog = await readCatalog();
-const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 const tag = process.env.GITHUB_REF_TYPE === 'tag' ? process.env.GITHUB_REF_NAME : process.env.RELEASE_TAG;
-if (tag && tag !== `v${pkg.version}`) throw new Error(`Tag ${tag} does not match package version v${pkg.version}`);
+const pkg = await verifyReleaseVersion({ tag });
 const commit = process.env.GITHUB_SHA ?? execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
 const manifest = await createManifest();
 for (const minor of Object.keys(catalog.php)) {
