@@ -150,6 +150,9 @@ verify and test it, then copy its assets into a Pages deployment. Its deployment
 must record the exact resolved version and hashes. Build inputs inside this
 repository remain pinned so that updating one dependency is a reviewable change.
 
+Maintainers: follow the [release preparation steps](CONTRIBUTING.md#preparing-and-publishing-a-release)
+to update package metadata before tagging a release.
+
 ## Validation
 
 ```sh
