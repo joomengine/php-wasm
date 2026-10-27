@@ -12,11 +12,22 @@ export interface EngineAsset {
   sha256: string;
 }
 
+export interface MariaDBDriverDescriptor {
+  /** Exact independently released bridge version compiled into this PHP engine. */
+  version: string;
+  protocolVersion: 1;
+  pdoDriver: 'mysql';
+  hostCall: 'mariadb.v1';
+  source: { repository: string; commit: string };
+}
+
 export interface EngineDescriptor {
   /** Exact PHP version, e.g. 8.4.27. */
   phpVersion: string;
   module: EngineAsset;
   wasm: EngineAsset;
+  /** Build provenance. Optional for custom engines; published engines include this driver. */
+  extensions?: { pdo_mariadb_wasm: MariaDBDriverDescriptor };
 }
 
 export interface RuntimeManifest {
@@ -46,7 +57,9 @@ interface CommonOptions {
    * Handlers return strings, normally JSON. Handlers must not await their own runtime.
    * Immediate reentry is rejected; after-await callback cycles are bounded by timeout.
    * Unrelated callers can queue work while a handler awaits external I/O.
-   * This hook does not implement mysqli, PDO MySQL, networking, or a database server.
+   * The compiled PDO mysql driver uses mariadb.v1 from @joomengine/mariadb-wasm-bridge.
+   * Pass its database.hostCalls here. The MariaDB engine is supplied separately;
+   * this hook does not implement mysqli or network sockets.
    */
   hostCalls?: Record<string, (payloadJson: string) => string | Promise<string>>;
 }

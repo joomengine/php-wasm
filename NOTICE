@@ -32,3 +32,10 @@ limitations under the License.
 
 You should have received a copy of the GNU General Public License
 and/or the Apache License, Version 2.0 along with this program.
+
+The statically compiled pdo_mariadb_wasm extension is supplied by:
+https://github.com/joomengine/mariadb-wasm-bridge
+Its exact Apache-2.0 source release and commit are recorded in versions.json
+and each engine's runtime manifest. The bridge LICENSE and NOTICE accompany
+the engine under licenses/pdo_mariadb_wasm/. The separately deployed MariaDB
+WebAssembly engine retains its own upstream license and release notices.

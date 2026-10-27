@@ -37,11 +37,11 @@ try {
   for (const [minor, engine] of Object.entries(manifest.engines)) {
     const php = await createPHP({ manifestUrl, phpVersion: minor });
     try {
-      await php.fs.writeFile('/workspace/package.php', '<?php echo json_encode([PHP_VERSION, PHP_SAPI, $argv[1]]);');
+      await php.fs.writeFile('/workspace/package.php', '<?php echo json_encode([PHP_VERSION, PHP_SAPI, $argv[1], extension_loaded("pdo_mariadb_wasm"), PDO::getAvailableDrivers()]);');
       const result = await php.run({ script: '/workspace/package.php', args: ['standalone archive'] });
       assert.equal(result.exitCode, 0);
       assert.equal(result.stderr.length, 0);
-      assert.deepEqual(JSON.parse(new TextDecoder().decode(result.stdout)), [engine.phpVersion, 'cli', 'standalone archive']);
+      assert.deepEqual(JSON.parse(new TextDecoder().decode(result.stdout)), [engine.phpVersion, 'cli', 'standalone archive', true, ['mysql']]);
       console.log(`Packaged PHP ${minor} passed in Node.js.`);
     } finally { await php.close(); }
   }
@@ -76,12 +76,12 @@ try {
       const { createPHP } = await import(new URL('./src/index.mjs', location.href).href);
       const php = await createPHP({ manifestUrl: new URL('./runtime-manifest.json', location.href), phpVersion });
       try {
-        await php.fs.writeFile('/workspace/package.php', '<?php echo json_encode([PHP_VERSION, PHP_SAPI, $argv[1]]);');
+        await php.fs.writeFile('/workspace/package.php', '<?php echo json_encode([PHP_VERSION, PHP_SAPI, $argv[1], extension_loaded("pdo_mariadb_wasm"), PDO::getAvailableDrivers()]);');
         const output = await php.run({ script: '/workspace/package.php', args: ['nested Pages path'] });
         return { exitCode: output.exitCode, stderr: output.stderr.length, value: JSON.parse(new TextDecoder().decode(output.stdout)), isolated: crossOriginIsolated };
       } finally { await php.close(); }
     }, minor);
-    assert.deepEqual(result, { exitCode: 0, stderr: 0, value: [manifest.engines[minor].phpVersion, 'cli', 'nested Pages path'], isolated: false });
+    assert.deepEqual(result, { exitCode: 0, stderr: 0, value: [manifest.engines[minor].phpVersion, 'cli', 'nested Pages path', true, ['mysql']], isolated: false });
     assert.deepEqual(uncaught, []);
     console.log('Packaged Chromium runtime passed at a nested Pages URL without cross-origin isolation.');
   }

@@ -7,6 +7,7 @@ import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
 import { readCatalog, root } from './catalog.mjs';
 import { createManifest } from './manifest.mjs';
+import { verificationSuites, verifyDatabaseReceipts } from './database-test-receipt.mjs';
 import { verifyReleaseVersion } from './release-version.mjs';
 
 const catalog = await readCatalog();
@@ -18,9 +19,10 @@ for (const minor of Object.keys(catalog.php)) {
   const receipt = JSON.parse(await readFile(path.join(root, 'dist', `verification-${minor}.json`), 'utf8'));
   if (receipt.schemaVersion !== 1 || receipt.commit !== commit || receipt.runtimeVersion !== pkg.version ||
       receipt.phpMinor !== minor || JSON.stringify(receipt.engine) !== JSON.stringify(manifest.engines[minor]) ||
-      JSON.stringify(receipt.suites) !== JSON.stringify(['node', 'chromium', 'firefox'])) {
+      JSON.stringify(receipt.suites) !== JSON.stringify(verificationSuites)) {
     throw new Error(`PHP ${minor}: missing or mismatched verification receipt; rebuild and run all suites`);
   }
+  verifyDatabaseReceipts(receipt.databaseTests, { minor, manifest, commit, catalog });
   const licenses = await readdir(path.join(root, 'dist', 'php', minor, 'licenses'));
   if (!licenses.length) throw new Error(`PHP ${minor}: upstream licenses must accompany binaries`);
 }

@@ -4,6 +4,7 @@ import { lstat, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readCatalog, root } from './catalog.mjs';
+import { mariaDBDriverDescriptor } from './manifest.mjs';
 import { verifyReleaseVersion } from './release-version.mjs';
 
 export async function verifyRelease(directory = path.join(root, 'release')) {
@@ -33,6 +34,7 @@ export async function verifyRelease(directory = path.join(root, 'release')) {
   assert.deepEqual(Object.keys(manifest.engines).sort(), Object.keys(catalog.php).sort());
   for (const [minor, engine] of Object.entries(manifest.engines)) {
     assert.equal(engine.phpVersion, catalog.php[minor].version);
+    assert.deepEqual(engine.extensions, { pdo_mariadb_wasm: mariaDBDriverDescriptor(catalog) }, `PHP ${minor}: native MariaDB driver provenance mismatch`);
     for (const [key, file] of [['module', 'php.mjs'], ['wasm', 'php.wasm']]) {
       assert.equal(engine[key].url, `php/${minor}/${file}`);
       assert.match(engine[key].sha256, /^[a-f0-9]{64}$/);

@@ -3,8 +3,8 @@
 The build compiles upstream PHP and its native libraries from source. The
 attributed patches in `patches/` cover Zend fiber/Emscripten compatibility and
 two upstream zlib security fixes awaiting a release. Their source commits and
-licenses are recorded in `patches/NOTICE`. The runtime does not import a
-WordPress or Joomla playground package.
+licenses are recorded in `patches/NOTICE`. The engine is built independently
+of application playground packages.
 
 On Ubuntu install `build-essential autoconf automake libtool pkg-config bison
 re2c cmake ninja-build jq curl xz-utils unzip git`. Then:
@@ -17,7 +17,11 @@ bash build/build.sh 8.4
 
 The other selectors are `8.3` and `8.5`. `versions.json` records exact PHP source
 archives and their SHA-256 values, dependency archives or immutable Git commits,
-and the Emscripten toolchain version. Change this catalog and run the native
+the Emscripten toolchain version, and the MariaDB bridge release source commit.
+The bridge remains independently versioned: its native PDO driver is fetched
+from that immutable commit, copied into the PHP source tree, and compiled
+statically after regenerating PHP configure files. Changing the driver invalidates
+the PHP source/object cache. Change this catalog and run the native
 integration suite before releasing an upgrade. Dependency source/build caches
 are under `.build/` (override with `BUILD`); compilation defaults to four jobs
 (override with `JOBS`).
@@ -52,8 +56,23 @@ security fixes independently until PHP provides a supported replacement.
 There is no socket proxy or browser TCP server. HTTPS downloads should be made
 by the JavaScript host and written to the virtual filesystem. OpenSSL supports
 local cryptographic operations; including it does not bypass browser networking
-restrictions. PDO core is compiled, but a MariaDB PDO driver is a separate
-project and must be integrated and tested before claiming Joomla installation.
+restrictions. PDO core and the separately maintained `pdo_mariadb_wasm` extension
+are compiled in. The extension registers PDO's `mysql` name and calls the
+`mariadb.v1` host hook; do not enable PHP's socket-based `pdo_mysql` alongside it.
+The MariaDB engine and JavaScript bridge run separately and must be supplied
+by the application (see the integration example in the repository README).
+
+Each successful link writes `mariadb-driver.json` beside the engine, recording
+the exact bridge version, protocol, source commit, and resulting module/WASM
+hashes. Manifest creation verifies this proof before advertising the PDO driver;
+old PHP builds without the extension must be rebuilt. The native extension's
+Apache-2.0 license and notices accompany the PHP artifacts. MariaDB itself is
+not linked into the PHP binary.
+
+Run `node --test test/extension-source.test.mjs` to check driver version validation,
+source fingerprinting, staging, and failure recovery without compiling PHP.
+The combined PHP WASM/MariaDB integration suites remain the required evidence
+that the compiled driver works; successful staging alone is insufficient.
 
 After building, run the package's real engine tests. They must use these locally
 built artifacts; a fake module test is not evidence of a working PHP runtime.
