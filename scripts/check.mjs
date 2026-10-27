@@ -3,12 +3,10 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { parseDocument } from 'yaml';
 import { readCatalog, root } from './catalog.mjs';
+import { verifyReleaseVersion } from './release-version.mjs';
 
 await readCatalog();
-const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
-if (!/^\d+\.\d+\.\d+$/.test(pkg.version)) throw new Error('A stable semantic package version is required');
-const lock = JSON.parse(await readFile(path.join(root, 'package-lock.json'), 'utf8'));
-if (lock.version !== pkg.version || lock.packages[''].version !== pkg.version) throw new Error('package-lock.json version mismatch');
+const pkg = await verifyReleaseVersion();
 for (const file of Object.values(pkg.exports['.'])) await access(path.join(root, file));
 
 async function walk(directory) {
