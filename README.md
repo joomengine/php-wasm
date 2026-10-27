@@ -10,6 +10,26 @@ the database engine and driver source independently. This runtime compiles its
 native PDO `mysql` driver into each PHP engine; the database worker is supplied
 separately. Joomla installation remains the playground's responsibility.
 
+## Upstream foundations and credits
+
+JoomEngine PHP WebAssembly builds on the work of these projects and their
+maintainers and contributors:
+
+- **[seanmorris/php-wasm](https://github.com/seanmorris/php-wasm)** — Sean Morris
+  and the project's contributors have made PHP in WebAssembly possible for many
+  applications. We directly reuse and adapt their PHP fiber and Emscripten
+  compatibility patches. Their work is an important foundation for this runtime;
+  source commits, adaptations and license attribution are recorded in
+  [NOTICE](NOTICE) and [patches/NOTICE](patches/NOTICE).
+- **[emscripten-core/emscripten](https://github.com/emscripten-core/emscripten)** —
+  The Emscripten maintainers and contributors provide the compiler toolchain and
+  runtime support that turn PHP and its native libraries into WebAssembly.
+  This project relies on Emscripten's JavaScript integration, virtual filesystem
+  and Asyncify support for asynchronous host calls.
+
+Thank you to both communities for the engineering and ongoing maintenance that
+make this project possible. Please visit and support their repositories.
+
 ## Capabilities
 
 - Independently built PHP **8.3, 8.4 and 8.5** engines; exact patch releases and
