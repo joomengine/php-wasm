@@ -2,7 +2,7 @@
 
 This repository owns the PHP execution layer for JoomEngine. It builds official
 PHP source into WebAssembly using Emscripten and supplies a small JavaScript API.
-It does not depend on WordPress Playground or Herman Peeren's playground.
+Its build and release lifecycle is independent of application playground packages.
 
 ## Boundaries
 

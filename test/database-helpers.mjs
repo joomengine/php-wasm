@@ -18,13 +18,6 @@ export async function loadMariaDB() {
   }
 }
 
-export function databaseOptions() {
-  return {
-    database: 'joomla',
-    engineModuleUrl: pathToFileURL(resolve(bridgeDirectory, 'vendor/lite4mariadb/index.mjs')).href,
-  };
-}
-
 // MariaDB pthreads require isolation; the existing PHP-only suite deliberately
 // keeps its own server unisolated to verify ordinary static-host compatibility.
 export async function serveDatabase() {

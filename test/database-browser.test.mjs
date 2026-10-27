@@ -9,7 +9,7 @@ import { engineOptions, phpVersion } from './helpers.mjs';
 const browsers = (process.env.PHP_WASM_BROWSERS ?? 'chromium').split(',').map(name => name.trim()).filter(Boolean);
 
 for (const browserName of browsers) {
-  test(`${browserName}: PHP ${phpVersion} PDO and MariaDB WASM with persisted SQL`, { timeout: 300_000 }, async () => {
+  test(`${browserName}: PHP ${phpVersion} PDO and MariaDB WASM with memory and persisted SQL`, { timeout: 300_000 }, async () => {
     assert.ok(['chromium', 'firefox'].includes(browserName), `Unsupported database browser ${browserName}`);
     await clearDatabaseReceipt(browserName);
     const server = await serveDatabase();
@@ -24,11 +24,34 @@ for (const browserName of browsers) {
       const uncaught = [];
       page.on('pageerror', error => uncaught.push(error.message));
       await page.goto(server.url);
+      // Exercise immediate shutdown after real PDO work without a persistence
+      // checkpoint, which can otherwise give native tasks extra time to finish.
+      const memory = await page.evaluate(async ({ options, fixture }) => {
+        const { createPHP } = await import('/src/index.mjs');
+        const { createMariaDB } = await import('/mariadb/src/index.mjs');
+        const db = await createMariaDB({ database: 'joomla' });
+        let php;
+        try {
+          php = await createPHP({ ...options, hostCalls: db.hostCalls });
+          await php.fs.writeFile('/workspace/database.php', fixture);
+          const result = await php.run({ script: '/workspace/database.php', env: { DATABASE_CASE: 'contract' } });
+          return { exitCode: result.exitCode, stderr: new TextDecoder().decode(result.stderr), output: new TextDecoder().decode(result.stdout) };
+        } finally {
+          try { await php?.close(); }
+          finally { await db.close(); }
+        }
+      }, { options, fixture: databaseFixture });
+      assert.equal(memory.exitCode, 0, memory.stderr);
+      const memorySummary = JSON.parse(memory.output);
+      assert.ok(memorySummary.assertions >= 22);
+      assert.equal(memorySummary.integerSize, 4);
+      assert.match(memorySummary.server, /MariaDB/);
+
       const persistence = { key: `php-pdo-${randomUUID()}` };
       const result = await page.evaluate(async ({ options, persistence, fixture }) => {
         const { createPHP } = await import('/src/index.mjs');
         const { createMariaDB } = await import('/mariadb/src/index.mjs');
-        const db = await createMariaDB({ database: 'joomla', persistence, engineModuleUrl: new URL('/mariadb/vendor/lite4mariadb/index.mjs', location.href).href });
+        const db = await createMariaDB({ database: 'joomla', persistence });
         const operations = [];
         let php;
         let ticks = 0;
@@ -92,7 +115,7 @@ for (const browserName of browsers) {
       const restored = await page.evaluate(async ({ options, persistence, fixture }) => {
         const { createPHP } = await import('/src/index.mjs');
         const { createMariaDB } = await import('/mariadb/src/index.mjs');
-        const db = await createMariaDB({ database: 'joomla', persistence, engineModuleUrl: new URL('/mariadb/vendor/lite4mariadb/index.mjs', location.href).href });
+        const db = await createMariaDB({ database: 'joomla', persistence });
         let php;
         try {
           php = await createPHP({ ...options, hostCalls: db.hostCalls });

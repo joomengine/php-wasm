@@ -2,13 +2,13 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createPHP } from '../src/index.mjs';
 import { clearDatabaseReceipt, recordDatabaseReceipt } from '../scripts/database-test-receipt.mjs';
-import { databaseFixture, databaseOptions, loadMariaDB } from './database-helpers.mjs';
+import { databaseFixture, loadMariaDB } from './database-helpers.mjs';
 import { decode, engineOptions, phpVersion } from './helpers.mjs';
 
 test(`PHP ${phpVersion}: native PDO and real MariaDB WebAssembly through Asyncify`, { timeout: 240_000 }, async () => {
   await clearDatabaseReceipt('node');
   const { createMariaDB } = await loadMariaDB();
-  const db = await createMariaDB(databaseOptions());
+  const db = await createMariaDB({ database: 'joomla' });
   const operations = [];
   const hostCalls = {
     'mariadb.v1': async payload => {

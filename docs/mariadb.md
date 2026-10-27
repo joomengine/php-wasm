@@ -40,9 +40,8 @@ Extract both release archives and arrange their contents relative to an
 The following module works in Node.js 24 or later with `node app.mjs`, or as
 `<script type="module" src="./app.mjs"></script>` on an appropriately isolated
 browser page. Node uses ephemeral storage; the browser example enables both
-stores' persistence. The explicit `engineModuleUrl` is required when using the
-standalone bridge archive in Node, where the bridge otherwise imports the
-installed `lite4mariadb` npm package.
+stores' persistence. Bridge v0.1.1 loads its prepared engine from the archive's
+`vendor/` directory by default in both environments.
 
 ```js
 import { createPHP } from './runtimes/php/src/index.mjs';
@@ -55,9 +54,6 @@ let php;
 try {
   database = await createMariaDB({
     database: 'joomla',
-    engineModuleUrl: new URL(
-      './runtimes/mariadb/vendor/lite4mariadb/index.mjs', import.meta.url,
-    ).href,
     ...(browser ? { persistence: { key: 'example-php84-database' } } : {}),
   });
   php = await createPHP({

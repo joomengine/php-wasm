@@ -1,9 +1,8 @@
 # JoomEngine PHP WebAssembly
 
 A self-maintained PHP runtime for browser workers, built from official PHP
-sources with Emscripten. The runtime has no WordPress or Herman Peeren runtime
-dependency. Its C adapter and small JavaScript API support PHP scripts, HTTP
-requests, virtual files and optional browser persistence.
+sources with Emscripten. Its C adapter and small JavaScript API support PHP
+scripts, HTTP requests, virtual files and optional browser persistence.
 
 This is the PHP layer of [JoomEngine Playground](https://github.com/joomengine/playground).
 The [MariaDB bridge](https://github.com/joomengine/mariadb-wasm-bridge) releases

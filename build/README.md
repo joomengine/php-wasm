@@ -3,8 +3,8 @@
 The build compiles upstream PHP and its native libraries from source. The
 attributed patches in `patches/` cover Zend fiber/Emscripten compatibility and
 two upstream zlib security fixes awaiting a release. Their source commits and
-licenses are recorded in `patches/NOTICE`. The runtime does not import a
-WordPress or Joomla playground package.
+licenses are recorded in `patches/NOTICE`. The engine is built independently
+of application playground packages.
 
 On Ubuntu install `build-essential autoconf automake libtool pkg-config bison
 re2c cmake ninja-build jq curl xz-utils unzip git`. Then:
