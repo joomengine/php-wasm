@@ -55,9 +55,23 @@ The input callback returns `null` on EOF. Reset input offsets for every run.
 PHP exposes `php_wasm_host_call(string $name, string $payload): string`.
 The function suspends until the host resolves its promise. Host errors become
 PHP exceptions. JSON is a convention for payloads; the bridge transports strings
-and rejects embedded NUL characters. This is an integration boundary, not a PDO
-driver or an implementation of MariaDB. The host chooses permitted operations.
+and rejects embedded NUL characters. The host chooses permitted operations.
+
+The statically compiled `pdo_mariadb_wasm` extension registers PDO's `mysql`
+driver and calls this existing function with host-call name `mariadb.v1`.
+The embedding JavaScript supplies `database.hostCalls` from the independently
+released MariaDB bridge. The native ABI stays at version 1: the extension uses
+Zend's function-call API and needs no added Emscripten import or network socket.
+The driver/protocol/source versions are recorded in each engine's manifest.
+
+PDO operations, including connection destruction during PHP request shutdown,
+can suspend for host calls. Keep the handler and database worker alive until
+the PHP invocation and cleanup have settled. Close PHP before closing its
+database. Forcibly terminating the PHP worker bypasses destructors; reset the
+surviving database bridge before creating replacement PHP. See
+[MariaDB integration](../docs/mariadb.md) for recovery and persistence rules.
 
 The module exports `FS`, `IDBFS`, `ENV`, `HEAPU8`, `ccall`, `cwrap`, UTF-8 helpers,
 `malloc`, and `free`. Persistence and Worker lifecycle are owned by the JS API.
-The module uses Asyncify and does not require shared memory or browser threads.
+The PHP module uses Asyncify and does not require shared memory or browser
+threads. A connected MariaDB worker has its own browser isolation requirements.

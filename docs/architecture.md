@@ -55,10 +55,12 @@ workflow should resolve that release to immutable assets and checksums, run the
 Joomla integration suite, and deploy only after that suite passes. Fetching an
 unreviewed floating branch during a browser visit defeats this design.
 
-Releasing this runtime requires real PHP execution tests, including browser
-execution. Releasing the playground additionally requires real Joomla and
-component installation tests. Passing this repository's tests alone cannot
-certify Joomla, JCB or a future database driver's compatibility.
+Releasing this runtime requires real PHP execution tests and combined
+PHP-WASM/PDO/MariaDB-WASM tests in Node.js, Chromium and Firefox. Test receipts
+bind the engine hashes, compiled driver source and independently released
+database archive to the tested source commit. Releasing the playground
+additionally requires real Joomla and component installation tests. Passing
+this repository's tests alone cannot certify Joomla or JCB compatibility.
 
 ## Hosting and operating-system limits
 
@@ -67,9 +69,11 @@ runs on the visitor's device. There is no server process, Docker daemon, shell,
 shared database service or private server-side environment on Pages.
 
 The PHP engine uses Asyncify rather than pthreads, so its own runtime does not
-require cross-origin isolation. A separate threaded MariaDB engine may impose
-additional isolation requirements; those belong to the database integration
-and playground hosting tests.
+require cross-origin isolation. The separate MariaDB engine uses threads and
+requires a secure, cross-origin-isolated browser context with
+`SharedArrayBuffer`. The combined test server supplies COOP/COEP headers.
+Providing equivalent isolation on GitHub Pages belongs to the playground's
+hosting integration; see [MariaDB integration](mariadb.md).
 
 Install ZIPs through browser `fetch` and write the bytes into the runtime before
 invoking PHP. Native PHP TCP sockets and native `curl` are not a browser network
@@ -93,20 +97,30 @@ login remain independent options. Commands intended only for first installation
 must not rerun against a restored site. Record completed provisioning steps and
 surface failures without reporting a partly provisioned site as ready.
 
-The database boundary requires a compiled PHP driver; a JavaScript callback or
-PDO base class alone is not a working MySQL driver. Do not promise drop-in
-Joomla database compatibility until the separate bridge passes its integration
-tests against Joomla 5 and 6 and the chosen extension packages.
+The database boundary uses the bridge's **statically compiled**
+`pdo_mariadb_wasm` extension, registered as PDO `mysql`. The build pins the
+bridge source release to an exact Git commit in `versions.json`, copies its
+native files into each PHP source tree and regenerates PHP's configuration.
+An engine-bound build marker prevents old artifacts from acquiring new driver
+metadata without rebuilding. Runtime manifests record the driver release,
+protocol and source commit. Native PHP `.so` loading is not part of this runtime.
 
-The intended native-driver integration is **static compilation**. The bridge
-repository will release its PHP driver source alongside its JavaScript database
-assets and define a versioned database protocol. This repository will pin that
-source release, compile the driver for each supported PHP version, and record
-the tested driver/protocol versions with its engine assets. The playground will
-then select a tested engine/database pair. Native PHP `.so` loading is not part
-of this runtime; avoiding it removes a second dynamic-linking ABI matrix.
+The bridge retains ownership of its driver source and JavaScript database
+assets. Tests download its separately released archive using the pinned SHA-256
+digest and verify its file inventory. The playground can resolve the latest
+stable releases at deployment time, but must verify and test the selected
+PHP/database pair and record immutable versions and hashes.
 
-The existing `php_wasm_host_call()` function is an asynchronous string transport
-with explicit registered host handlers. It is not a PDO or mysqli implementation.
-A PDO MySQL driver will cover Joomla's PDO database path; extensions that use
-mysqli directly will need separately tested mysqli compatibility.
+The native PDO driver calls `php_wasm_host_call()` using `mariadb.v1`; this
+transport suspends PHP through Asyncify while a separate database worker runs
+SQL. Pass `database.hostCalls` when creating PHP. A bridge owns one connection
+lease, so each application instance should own one bridge and one PHP worker.
+Normal PHP request cleanup closes the PDO lease and rolls back an open
+transaction. If PHP is forcibly terminated, the embedding application must
+stop that worker, reset the surviving bridge, then create replacement PHP.
+
+Flush both the PHP filesystem and database explicitly after successful work.
+They use independent stores and provide no atomic cross-store transaction.
+The integration covers Joomla's PDO database path; `mysqli` remains
+unsupported. Joomla 5/6 installation and the chosen extension packages still
+require their own application-level tests.

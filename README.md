@@ -6,8 +6,10 @@ dependency. Its C adapter and small JavaScript API support PHP scripts, HTTP
 requests, virtual files and optional browser persistence.
 
 This is the PHP layer of [JoomEngine Playground](https://github.com/joomengine/playground).
-The [MariaDB bridge](https://github.com/joomengine/mariadb-wasm-bridge) is a separate
-integration. A database driver and Joomla installation are not included here.
+The [MariaDB bridge](https://github.com/joomengine/mariadb-wasm-bridge) releases
+the database engine and driver source independently. This runtime compiles its
+native PDO `mysql` driver into each PHP engine; the database worker is supplied
+separately. Joomla installation remains the playground's responsibility.
 
 ## Capabilities
 
@@ -19,11 +21,13 @@ integration. A database driver and Joomla installation are not included here.
 - An isolated virtual filesystem per instance, with opt-in IndexedDB persistence
   and an explicit flush operation.
 - Checksummed engine manifests and a versioned native ABI.
+- A statically compiled MariaDB PDO driver using the versioned `mariadb.v1`
+  asynchronous host protocol, with driver provenance in each engine manifest.
 - Real WebAssembly execution tests in Node.js and browsers. Release jobs require
   all supported engines to pass those tests before producing release assets.
 
-The first stable release must pass that matrix. Source availability alone is
-not a claim that Joomla or any particular component has been validated.
+Releases must pass both the PHP runtime and combined PHP/MariaDB test matrix.
+These checks do not certify Joomla installation or any particular component.
 
 ## Build and run locally
 
@@ -122,6 +126,19 @@ rejected with `REENTRANT_CALL`; a callback that reenters after an `await` create
 a cycle bounded by the operation timeout. Unrelated requests arriving while a
 host operation awaits IO are accepted into the normal serialized queue.
 
+## MariaDB through PDO
+
+Create a database with the independently released MariaDB bridge, then pass
+`database.hostCalls` to `createPHP()`. PHP can use
+`new PDO('mysql:dbname=joomla;charset=utf8mb4', 'root', '')` through the compiled
+`pdo_mariadb_wasm` extension. The bridge supports one live PDO connection per
+engine and emulated prepared statements; it does not provide `mysqli`.
+
+See [MariaDB integration](docs/mariadb.md) for complete browser and Node.js
+examples, persistence, failure recovery and matching release versions. The
+combined browser application requires cross-origin isolation for MariaDB's
+threads, even though PHP by itself does not.
+
 ## Static hosting and releases
 
 The runtime serves as ordinary static JavaScript and WebAssembly, including
@@ -157,12 +174,17 @@ npm run check
 PHP_WASM_VERSION=8.4 npm run test:integration
 npx playwright install --with-deps chromium firefox
 PHP_WASM_VERSION=8.4 PHP_WASM_BROWSERS=chromium,firefox npm run test:browser
+npm run prepare:mariadb
+PHP_WASM_VERSION=8.4 npm run test:database
+PHP_WASM_VERSION=8.4 PHP_WASM_BROWSERS=chromium,firefox npm run test:database:browser
 ```
 
 Tests execute the compiled engine; they do not substitute mock PHP results.
 Coverage includes CLI/HTTP mode switching, request isolation, sessions, fibers,
 native extension operations, binary IO, worker termination and persisted files
 across browser reloads. Missing build artifacts fail the test run.
+The database suites run the compiled PDO driver inside PHP WASM against the
+real MariaDB WASM worker, including transaction cleanup and browser persistence.
 
 ## Runtime boundaries
 
@@ -178,10 +200,10 @@ and preloading are disabled because their native shared-memory behavior is not
 supported by this engine. Attempts to enable them through the API are rejected.
 
 The native profile includes DOM/XML, mbstring, intl, ZIP/zlib, OpenSSL, GD, PDO
-and other core facilities. PDO itself is not a MySQL driver. The MariaDB project
-must supply and validate the database integration before this becomes a working
-Joomla playground. GD's image profile supports PNG, GIF and JPEG; WebP and
-FreeType are not compiled into this profile.
+and the MariaDB bridge's PDO `mysql` driver. The database engine is a separate
+release and requires its host handlers when PHP connects. Joomla and JCB still
+need application-level installation and execution tests. GD's image profile
+supports PNG, GIF and JPEG; WebP and FreeType are not compiled into this profile.
 
 Read [architecture](docs/architecture.md), [security](SECURITY.md) and
 [contribution guidance](CONTRIBUTING.md) before extending the runtime. Own code is

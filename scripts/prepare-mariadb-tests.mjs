@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readdir, rename, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readCatalog, root } from './catalog.mjs';
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+const nativeFiles = ['config.m4', 'pdo_mariadb_wasm.c', 'php_pdo_mariadb_wasm.h'];
 
 export async function verifyBridge(directory, source) {
   const manifest = JSON.parse(await readFile(path.join(directory, 'bridge-manifest.json'), 'utf8'));
@@ -32,10 +33,21 @@ export async function verifyBridge(directory, source) {
   }
   await walk();
   assert.deepEqual(found.sort(), Object.keys(manifest.files).sort(), 'Incomplete bridge archive');
-  for (const required of ['src/index.mjs', 'native/pdo_mariadb_wasm.c', 'native/config.m4', 'vendor/lite4mariadb/index.mjs', 'vendor/lite4mariadb/lite4mariadb.wasm', 'vendor/lite4mariadb/COPYING']) {
+  for (const required of ['src/index.mjs', ...nativeFiles.map(name => `native/${name}`), 'vendor/lite4mariadb/index.mjs', 'vendor/lite4mariadb/lite4mariadb.wasm', 'vendor/lite4mariadb/COPYING']) {
     assert.ok(manifest.files[required], `Missing bridge asset: ${required}`);
   }
   return manifest;
+}
+
+export async function verifyNativeSource(directory, sourceDirectory) {
+  // Preparation may run before a first PHP build. Once a source directory
+  // exists, however, every native file must be present and match the release.
+  try { await stat(sourceDirectory); }
+  catch (error) { if (error.code === 'ENOENT') return; throw error; }
+  for (const name of nativeFiles) {
+    const native = await readFile(path.join(sourceDirectory, 'native', name));
+    assert.deepEqual(await readFile(path.join(directory, 'native', name)), native, `Compiled source differs from released bridge: ${name}`);
+  }
 }
 
 export async function prepareMariaDB() {
@@ -70,13 +82,9 @@ export async function prepareMariaDB() {
     execFileSync('tar', ['-xzf', archive, '--no-same-owner', '--no-same-permissions', '-C', temporary]);
     const extracted = path.join(temporary, prefix);
     await verifyBridge(extracted, source);
-    // Verify release parity when the locked driver source has already been fetched.
-    for (const name of ['config.m4', 'pdo_mariadb_wasm.c', 'php_pdo_mariadb_wasm.h']) {
-      let native;
-      try { native = await readFile(path.join(build, 'sources/pdo_mariadb_wasm/native', name)); }
-      catch (error) { if (error.code !== 'ENOENT') throw error; continue; }
-      assert.deepEqual(await readFile(path.join(extracted, 'native', name)), native, `Compiled source differs from released bridge: ${name}`);
-    }
+    // BUILD changes the native build cache location independently of test staging.
+    const sourceBuild = path.resolve(root, process.env.BUILD ?? '.build');
+    await verifyNativeSource(extracted, path.join(sourceBuild, 'sources/pdo_mariadb_wasm'));
     await mkdir(path.dirname(destination), { recursive: true });
     await rm(destination, { recursive: true, force: true });
     await rename(extracted, destination);
